@@ -9,8 +9,10 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from tkinter import messagebox, simpledialog
 import psycopg2
+import json
+import base64
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.5.1"
 URL_VERSION = "https://gestor-flks.onrender.com/Version.txt"
 URL_EXE = "https://gestor-flks.onrender.com/Gestor.exe"
 
@@ -352,6 +354,27 @@ def obtener_ruta_absoluta_gestor(rel_path):
 # Variable global para control de timers
 timer_id_gestor = None
 
+# Utilidad: aplicar icono y título unificado "PaintFlow — ..." a cualquier ventana
+def aplicar_icono_y_titulo(ventana, titulo_suffix=None):
+    try:
+        icono_path = obtener_ruta_absoluta_gestor("icono.ico")
+        if os.path.exists(icono_path):
+            try:
+                ventana.iconbitmap(icono_path)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    base = "PaintFlow"
+    try:
+        if titulo_suffix:
+            ventana.title(f"{base} — {titulo_suffix}")
+        else:
+            ventana.title(base)
+    except Exception:
+        pass
+
 # Configuración para impresión de etiquetas
 IMPRESORA_CONF_PATH = os.path.join(os.getcwd(), 'config_impresora.txt')
 
@@ -603,7 +626,7 @@ def mostrar_seleccionador_impresora():
     
     # Crear ventana de selección
     ventana = tk.Toplevel()
-    ventana.title("Seleccionar Impresora")
+    aplicar_icono_y_titulo(ventana, "Seleccionar Impresora")
     ventana.geometry("400x300")
     ventana.resizable(False, False)
     ventana.grab_set()  # Modal
@@ -1045,257 +1068,263 @@ class SistemaLoginColorista:
             cur.close()
             conn.close()
     
-    def mostrar_login(self):
-        """Muestra la ventana de login"""
-        ventana_login = tk.Tk()
-        ventana_login.title("Sistema Lista de Espera - Login")
-        ventana_login.geometry("450x700")
+    def mostrar_login(self, master=None):
+        """Muestra la ventana de login.
+
+        Si se proporciona `master`, se crea como una Toplevel modal para usar un único root.
+        """
+        if master is not None:
+            ventana_login = tk.Toplevel(master)
+            try:
+                ventana_login.transient(master)
+                ventana_login.grab_set()
+            except Exception:
+                pass
+        else:
+            ventana_login = tk.Tk()
+
+        aplicar_icono_y_titulo(ventana_login, "Login")
+        ventana_login.geometry("600x330")
         ventana_login.resizable(False, False)
         ventana_login.configure(bg="#f5f5f5")
-        
-        # Configurar icono si existe usando ruta absoluta
-        icono_path = obtener_ruta_absoluta_gestor("icono.ico")
-        if os.path.exists(icono_path):
+
+        # Aplicar estilo ttkbootstrap
+        try:
+            ttk.Style(theme="flatly")
             try:
-                ventana_login.iconbitmap(icono_path)
-            except:
+                style = ttk.Style()
+                style.configure('primary.TEntry', foreground="#1b1f23", insertcolor="#0D47A1")
+                style.map('primary.TEntry', bordercolor=[('focus', '#1565C0'), ('!focus', '#1976D2')])
+            except Exception:
                 pass
-        
+        except Exception:
+            try:
+                ttk.Style()
+            except Exception:
+                pass
+
+        # Cargar preferencias de login
+        saved_username = ""
+        saved_password = ""
+        remember_access_saved = False
+        try:
+            cfg_path = obtener_ruta_absoluta_gestor("gestor_login.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    saved_username = data.get('usuario', "") or ""
+                    remember_access_saved = bool(data.get('recordar', False) or data.get('recordar_pass', False))
+                    enc_pwd = data.get('password')
+                    if remember_access_saved and enc_pwd:
+                        try:
+                            saved_password = base64.b64decode(enc_pwd.encode('utf-8')).decode('utf-8')
+                        except Exception:
+                            saved_password = ""
+        except Exception:
+            pass
+
+        # Icono
+        # icono y título ya asignados por aplicar_icono_y_titulo
+
         # Centrar ventana
         ventana_login.update_idletasks()
-        x = (ventana_login.winfo_screenwidth() // 2) - (450 // 2)
-        y = (ventana_login.winfo_screenheight() // 2) - (700 // 2)
-        ventana_login.geometry(f"450x700+{x}+{y}")
-        
-        # Frame principal con sombra
-        main_frame = tk.Frame(
-            ventana_login, 
-            bg="white", 
-            relief="flat", 
-            bd=0
-        )
-        main_frame.pack(fill="both", expand=True, padx=30, pady=30)
-        
-        # Frame de contenido interno
+        x = (ventana_login.winfo_screenwidth() // 2) - (600 // 2)
+        y = (ventana_login.winfo_screenheight() // 2) - (330 // 2)
+        ventana_login.geometry(f"600x330+{x}+{y}")
+
+        # Contenedor principal
+        main_frame = tk.Frame(ventana_login, bg="white", relief="flat", bd=0)
+        main_frame.pack(fill="both", expand=True, padx=16, pady=12)
+
         content_frame = tk.Frame(main_frame, bg="white")
-        content_frame.pack(fill="both", expand=True, padx=30, pady=30)
-        
-        # Logo grande centrado usando ruta absoluta
+        content_frame.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # Card horizontal: logo | divisor | formulario
+        card = tk.Frame(content_frame, bg="white", bd=0, highlightthickness=0)
+        card.pack(fill="both", expand=True, padx=2, pady=4)
+
+        card.grid_columnconfigure(0, weight=0)
+        card.grid_columnconfigure(1, weight=0)
+        card.grid_columnconfigure(2, weight=1)
+        card.grid_rowconfigure(0, weight=1)
+
+        # Logo
+        left_panel = tk.Frame(card, bg="white")
+        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(2, 6))
+
         logo_path = obtener_ruta_absoluta_gestor("logo.png")
         if os.path.exists(logo_path):
             try:
-                # Cargar y redimensionar logo
                 logo_img = Image.open(logo_path)
-                logo_img = logo_img.resize((220, 220), Image.Resampling.LANCZOS)
+                logo_img = logo_img.resize((260, 260), Image.Resampling.LANCZOS)
                 self.logo_photo = ImageTk.PhotoImage(logo_img)
-                
-                # Mostrar logo centrado
-                logo_label = tk.Label(content_frame, image=self.logo_photo, bg="white")
-                logo_label.pack(pady=(15, 25))
+                tk.Label(left_panel, image=self.logo_photo, bg="white").pack(anchor="nw", padx=0, pady=0)
             except Exception as e:
                 print(f"Error cargando logo: {e}")
-                # Si no se puede cargar el logo, mostrar título alternativo
-                tk.Label(
-                    content_frame,
-                    text="🏭 LISTA DE ESPERA",
-                    font=("Segoe UI", 28, "bold"),
-                    fg="#1976D2",
-                    bg="white"
-                ).pack(pady=(25, 25))
+                tk.Label(left_panel, text="LISTA DE ESPERA", font=("Segoe UI", 18, "bold"), fg="#1976D2", bg="white").pack(anchor="nw", padx=0, pady=0)
         else:
-            # Título principal sin logo
-            tk.Label(
-                content_frame,
-                text="🏭 LISTA DE ESPERA",
-                font=("Segoe UI", 28, "bold"),
-                fg="#1976D2",
-                bg="white"
-            ).pack(pady=(25, 25))
-        
-        # Frame para el formulario con estilo moderno
-        form_frame = tk.Frame(content_frame, bg="white")
-        form_frame.pack(fill="x", pady=(0, 20))
-        
-        # Usuario con estilo moderno
-        tk.Label(
-            form_frame, 
-            text="Usuario", 
-            font=("Segoe UI", 11, "normal"), 
-            fg="#333333",
-            bg="white"
-        ).pack(anchor="w", pady=(0, 8))
-        
-        entry_usuario = tk.Entry(
-            form_frame, 
-            font=("Segoe UI", 12), 
-            relief="solid",
-            bd=1,
-            highlightthickness=2,
-            highlightcolor="#1976D2",
-            bg="white",
-            fg="#333333"
-        )
-        entry_usuario.pack(fill="x", ipady=8, pady=(0, 20))
-        
-        # Contraseña con estilo moderno
-        tk.Label(
-            form_frame, 
-            text="Contraseña", 
-            font=("Segoe UI", 11, "normal"), 
-            fg="#333333",
-            bg="white"
-        ).pack(anchor="w", pady=(0, 8))
-        
-        entry_password = tk.Entry(
-            form_frame, 
-            font=("Segoe UI", 12), 
-            show="*",
-            relief="solid",
-            bd=1,
-            highlightthickness=2,
-            highlightcolor="#1976D2",
-            bg="white",
-            fg="#333333"
-        )
-        entry_password.pack(fill="x", ipady=8, pady=(0, 15))
-        
-        # Área de mensajes de error/estado (inicialmente oculta)
-        mensaje_frame = tk.Frame(form_frame, bg="white")
-        mensaje_frame.pack(fill="x", pady=(0, 15))
-        
-        label_mensaje = tk.Label(
-            mensaje_frame,
-            text="",
-            font=("Segoe UI", 10),
-            bg="white",
-            wraplength=300,
-            justify="center"
-        )
+            tk.Label(left_panel, text="LISTA DE ESPERA", font=("Segoe UI", 18, "bold"), fg="#1976D2", bg="white").pack(anchor="nw", padx=0, pady=0)
+
+        # Divisor
+        divider = ttk.Separator(card, orient="vertical")
+        divider.grid(row=0, column=1, sticky="ns", pady=8)
+
+        # Formulario
+        right_panel = tk.Frame(card, bg="white")
+        right_panel.grid(row=0, column=2, sticky="nsew", padx=(10, 12), pady=12)
+
+        form_frame = tk.Frame(right_panel, bg="white")
+        form_frame.pack(fill="both", expand=True)
+
+        # Contenedor angosto para reducir ancho de entradas y botón
+        fields_frame = tk.Frame(form_frame, bg="white")
+        fields_frame.pack(anchor="w")
+
+        tk.Label(fields_frame, text="Usuario", font=("Segoe UI", 10, "normal"), fg="#333333", bg="white").pack(anchor="w", pady=(6, 4))
+        entry_usuario = ttk.Entry(fields_frame, bootstyle="primary", font=("Segoe UI", 10), width=28)
+        entry_usuario.pack(anchor="w", ipady=1, pady=(0, 6))
+        if remember_access_saved and saved_username:
+            try:
+                entry_usuario.insert(0, saved_username)
+            except Exception:
+                pass
+
+        tk.Label(fields_frame, text="Contraseña", font=("Segoe UI", 10, "normal"), fg="#333333", bg="white").pack(anchor="w", pady=(0, 4))
+        entry_password = ttk.Entry(fields_frame, bootstyle="primary", font=("Segoe UI", 10), show="*", width=28)
+        entry_password.pack(anchor="w", ipady=1, pady=(0, 4))
+        if remember_access_saved and saved_password:
+            try:
+                entry_password.insert(0, saved_password)
+            except Exception:
+                pass
+
+        controls_frame = tk.Frame(fields_frame, bg="white")
+        controls_frame.pack(anchor="w", pady=(0, 4))
+        mostrar_var = tk.BooleanVar(value=False)
+        recordar_acceso_var = tk.BooleanVar(value=remember_access_saved)
+
+        def toggle_password():
+            try:
+                entry_password.configure(show="" if mostrar_var.get() else "*")
+            except Exception:
+                pass
+
+        # Toggle mostrar con texto más pequeño
+        mostrar_row = tk.Frame(controls_frame, bg="white")
+        mostrar_row.pack(fill="x")
+        chk_mostrar = ttk.Checkbutton(mostrar_row, text="", variable=mostrar_var, bootstyle="primary-round-toggle", command=toggle_password)
+        chk_mostrar.pack(side="left")
+        tk.Label(mostrar_row, text="Mostrar contraseña", font=("Segoe UI", 9), bg="white", fg="#333333").pack(side="left", padx=(6, 0))
+
+        remember_row = tk.Frame(controls_frame, bg="white")
+        remember_row.pack(fill="x", pady=(4, 0))
+        chk_recordar_inline = ttk.Checkbutton(remember_row, text="", variable=recordar_acceso_var, bootstyle="primary-round-toggle")
+        chk_recordar_inline.pack(side="left")
+        tk.Label(remember_row, text="Recordar usuario", font=("Segoe UI", 9), bg="white", fg="#333333").pack(side="left", padx=(6, 0))
+
+        mensaje_frame = tk.Frame(fields_frame, bg="white")
+        mensaje_frame.pack(anchor="w", pady=(0, 4))
+        label_mensaje = tk.Label(mensaje_frame, text="", font=("Segoe UI", 10), bg="white", wraplength=260, justify="left")
         label_mensaje.pack()
-        
+
+        pb_login = ttk.Progressbar(mensaje_frame, mode="indeterminate", bootstyle="info-striped")
+        pb_login.pack(anchor="w", pady=(4, 0))
+        pb_login.stop()
+        pb_login.pack_forget()
+
         def mostrar_mensaje(mensaje, tipo="error"):
             if tipo == "error":
                 label_mensaje.configure(text=mensaje, fg="#d32f2f")
             elif tipo == "exito":
                 label_mensaje.configure(text=mensaje, fg="#388e3c")
-            
             tiempo = 5000 if tipo == "error" else 2000
             limpiar_mensaje_despues_gestor(label_mensaje, tiempo, "")
-        
+
         def procesar_login():
             username = entry_usuario.get().strip()
             password = entry_password.get()
-            
             if not username or not password:
                 mostrar_mensaje("Por favor ingresa usuario y contraseña")
                 return
-            
+            try:
+                btn_login.configure(state="disabled", text="Verificando…")
+                try:
+                    pb_login.pack(fill="x", pady=(6, 0))
+                    pb_login.start(10)
+                except Exception:
+                    pass
+                ventana_login.update_idletasks()
+            except Exception:
+                pass
+
             resultado = self.verificar_credenciales(username, password)
-            
             if "error" in resultado:
                 mostrar_mensaje(resultado["error"])
+                try:
+                    btn_login.configure(state="normal", text="INICIAR SESIÓN")
+                    try:
+                        pb_login.stop()
+                        pb_login.pack_forget()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
                 return
-            
-            # Login exitoso
+
             self.usuario_actual = resultado
             self.sucursal = resultado.get('sucursal_nombre', 'SUCURSAL PRINCIPAL')
-            
+
+            try:
+                cfg_path_local = obtener_ruta_absoluta_gestor("gestor_login.json")
+                if recordar_acceso_var.get():
+                    try:
+                        enc_pwd = base64.b64encode(password.encode('utf-8')).decode('utf-8')
+                    except Exception:
+                        enc_pwd = ""
+                    payload = {"usuario": username, "recordar": True, "recordar_pass": True, "password": enc_pwd}
+                    with open(cfg_path_local, 'w', encoding='utf-8') as f:
+                        json.dump(payload, f, ensure_ascii=False)
+                else:
+                    if os.path.exists(cfg_path_local):
+                        os.remove(cfg_path_local)
+            except Exception:
+                pass
+
             mostrar_mensaje(f"¡Bienvenido {resultado['nombre_completo']}!", "exito")
             ventana_login.after(1500, ventana_login.destroy)
-        
-        # Botón de login moderno con hover effect
-        btn_login = tk.Button(
-            form_frame,
-            text="INICIAR SESIÓN",
-            font=("Segoe UI", 13, "bold"),
-            bg="#1976D2",
-            fg="white",
-            relief="flat",
-            bd=0,
-            cursor="hand2",
-            command=procesar_login
-        )
-        btn_login.pack(fill="x", ipady=12, pady=(0, 15))
-        
-        # Agregar efectos hover al botón
-        btn_login.bind("<Enter>", lambda e: btn_login.configure(bg="#1565C0"))
-        btn_login.bind("<Leave>", lambda e: btn_login.configure(bg="#1976D2"))
-        
-        # Botón de debug temporal (se puede quitar después)
-        btn_debug = tk.Button(
-            form_frame,
-            text="🔧 DEBUG: Verificar BD",
-            font=("Segoe UI", 9),
-            bg="#ffc107",
-            fg="black",
-            relief="flat",
-            bd=0,
-            cursor="hand2",
-            command=lambda: self.debug_verificar_bd()
-        )
-        btn_debug.pack(fill="x", ipady=8, pady=(5, 0))
-        
-        # Información de credenciales por defecto con diseño moderno
-        info_frame = tk.Frame(content_frame, bg="#f8f9fa", relief="flat", bd=0)
-        info_frame.pack(fill="x", pady=(10, 20), padx=0)
-        
-        tk.Label(
-            info_frame,
-            text="💡 Credenciales por defecto",
-            font=("Segoe UI", 10, "bold"),
-            fg="#495057",
-            bg="#f8f9fa"
-        ).pack(pady=(15, 5))
-        
-        tk.Label(
-            info_frame,
-            text="Colorista: colorista_churchill  |  Contraseña: colorista123",
-            font=("Segoe UI", 9),
-            fg="#6c757d",
-            bg="#f8f9fa"
-        ).pack(pady=(0, 5))
-        
-        tk.Label(
-            info_frame,
-            text="Admin: admin  |  Contraseña: admin123",
-            font=("Segoe UI", 9),
-            fg="#6c757d",
-            bg="#f8f9fa"
-        ).pack(pady=(0, 15))
-        
-        # Información de roles con diseño más limpio
-        roles_frame = tk.Frame(content_frame, bg="white")
-        roles_frame.pack(fill="x", pady=(0, 10))
-        
-        tk.Label(
-            roles_frame,
-            text="Roles disponibles:",
-            font=("Segoe UI", 10, "bold"),
-            fg="#333333",
-            bg="white"
-        ).pack(anchor="w", pady=(0, 8))
-        
-        roles_info = [
-            "👑 Administrador: Acceso completo al sistema",
-            "🎨 Colorista: Gestión de cola de producción y lista de espera"
-        ]
-        
-        for info in roles_info:
-            tk.Label(
-                roles_frame,
-                text=info,
-                font=("Segoe UI", 9),
-                fg="#666666",
-                bg="white"
-            ).pack(anchor="w", pady=1)
-        
-        # Bind Enter
+            try:
+                btn_login.configure(state="normal", text="INICIAR SESIÓN")
+                try:
+                    pb_login.stop()
+                    pb_login.pack_forget()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        # Botón un poco más estrecho y texto ligeramente más alto
+        btn_login = ttk.Button(fields_frame, text="INICIAR SESIÓN", bootstyle="info", padding=(10, 8, 10, 14), command=procesar_login, width=26)
+        btn_login.pack(anchor="w", ipady=3, pady=(2, 6))
+
+        try:
+            entry_usuario.focus_set()
+            entry_password.bind("<Return>", lambda e: procesar_login())
+            ventana_login.bind("<Escape>", lambda e: ventana_login.destroy())
+        except Exception:
+            pass
+
         entry_password.bind("<Return>", lambda e: procesar_login())
         entry_usuario.bind("<Return>", lambda e: entry_password.focus())
-        
         entry_usuario.focus()
-        ventana_login.mainloop()
-        
+
+        if master is not None:
+            try:
+                master.wait_window(ventana_login)
+            except Exception:
+                pass
+        else:
+            ventana_login.mainloop()
+
         return self.usuario_actual is not None
     
     def debug_verificar_bd(self):
@@ -1334,20 +1363,36 @@ class SistemaLoginColorista:
                 conn.close()
 
 # Función para ejecutar el login del colorista
-def ejecutar_login_colorista():
-    """Ejecuta el sistema de login y retorna la información del usuario"""
+def ejecutar_login_colorista(master=None):
+    """Ejecuta el sistema de login y retorna la información del usuario.
+
+    Si se pasa `master`, el login se muestra como Toplevel modal sobre ese root.
+    """
     sistema_login = SistemaLoginColorista()
-    
-    if sistema_login.mostrar_login():
+    ok = sistema_login.mostrar_login(master=master)
+    if ok:
         return sistema_login.usuario_actual, sistema_login.sucursal
-    else:
-        # Si se cancela el login, salir de la aplicación
-        sys.exit(0)
+    return None, None
 
 class GestorListaEspera:
-    def __init__(self, usuario_info, sucursal_info):
-        """Inicializa el gestor con información del usuario autenticado"""
-        self.root = ttk.Window(themename="cosmo")
+    def __init__(self, usuario_info, sucursal_info, master=None):
+        """Inicializa el gestor con información del usuario autenticado.
+
+        Reutiliza un root existente si se proporciona `master` para mantener un solo intérprete Tk.
+        """
+        if master is not None:
+            self.root = master
+            try:
+                # Aplicar tema de ttkbootstrap al root existente
+                ttk.Style(theme="cosmo")
+            except Exception:
+                try:
+                    ttk.Style()
+                except Exception:
+                    pass
+        else:
+            # Fallback: crear una ventana de ttkbootstrap si no se proporcionó master
+            self.root = ttk.Window(themename="cosmo")
         
         # Información del usuario desde login integrado
         self.usuario_info = usuario_info
@@ -1383,11 +1428,21 @@ class GestorListaEspera:
         self.interactuando = False
         self._interaccion_timer = None
         
-        # Título con información del usuario autenticado
-        titulo_completo = f"Sistema de Lista de Espera - Producción | Usuario: {self.usuario_username} ({self.usuario_rol.title()}) | {self.sucursal_actual}"
+        # Título con información del usuario autenticado (unificado con PaintFlow)
+        titulo_completo = f"PaintFlow — Producción | Usuario: {self.usuario_username} ({self.usuario_rol.title()}) | {self.sucursal_actual}"
+        try:
+            aplicar_icono_y_titulo(self.root, None)  # Solo icono; el título se establece abajo
+        except Exception:
+            pass
         self.root.title(titulo_completo)
         self.root.geometry("1500x800")
         
+        # Asegurar índices que mejoran el rendimiento de consultas por factura/estado
+        try:
+            self._asegurar_indices_sucursal()
+        except Exception:
+            pass
+
         self.crear_interfaz()
         self.cargar_datos()
         
@@ -1401,6 +1456,44 @@ class GestorListaEspera:
         self._recordatorio_timer_id = None
         self._recordatorio_intervalo_ms = 30000  # 30 segundos
         self.iniciar_recordatorio_pendientes()
+
+    def _asegurar_indices_sucursal(self):
+        """Crea índices claves (id_factura, (id_factura, estado), codigo, presentacion) si no existen.
+        Esto acelera la carga por listas y operaciones de grupo.
+        """
+        try:
+            conn = self.conectar_db()
+            if not conn:
+                return
+            sucursal_usuario = obtener_sucursal_usuario(self.usuario_username)
+            tabla = obtener_tabla_sucursal(sucursal_usuario)
+            cur = conn.cursor()
+
+            # Detectar columnas existentes
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema='public' AND table_name=%s
+            """, (tabla,))
+            cols = {r[0] for r in cur.fetchall()}
+
+            # Índices siempre útiles
+            cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_id_factura ON {tabla}(id_factura);")
+            cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_factura_estado ON {tabla}(id_factura, estado);")
+            cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_codigo ON {tabla}(codigo);")
+            if 'presentacion' in cols:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_presentacion ON {tabla}(presentacion);")
+
+            conn.commit()
+            cur.close(); conn.close()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            try:
+                cur.close(); conn.close()
+            except Exception:
+                pass
     
     def calcular_tiempo_restante(self, fecha_compromiso, estado, tiempo_estimado, row_id):
         """Calcula tiempo restante basado en estado y tiempo estimado"""
@@ -1601,7 +1694,7 @@ class GestorListaEspera:
             text="Guardar cancelados en histórico",
             variable=self.var_archivar_cancelados,
             command=self._toggle_archivar_cancelados,
-            bootstyle="round-toggle"
+            bootstyle="primary-round-toggle"
         )
         chk_archivar.pack(side="right", padx=10)
 
@@ -1691,10 +1784,9 @@ class GestorListaEspera:
         self.menu_contextual.add_command(label="▶️ Iniciar Producción", command=self.iniciar_produccion, accelerator="Ctrl+Enter")
         self.menu_contextual.add_command(label="✅ Finalizar", command=self.finalizar_pedido, accelerator="Ctrl+F")
         self.menu_contextual.add_command(label="🖨️ Imprimir Etiqueta", command=self.imprimir_etiqueta, accelerator="Ctrl+P")
-        # Acciones por lista (misma factura)
-        self.menu_contextual.add_command(label="🧩 Trabajar lista completa", command=self.iniciar_lista_completa)
-        self.menu_contextual.add_command(label="🖨️ Imprimir en proceso de la lista", command=self.imprimir_pendientes_lista)
-        self.menu_contextual.add_command(label="✅ Finalizar lista", command=self.finalizar_lista)
+        # Nueva opción: ver fórmula de la presentación seleccionada
+        self.menu_contextual.add_command(label="📘 Fórmula", command=self.mostrar_formula, accelerator="Ctrl+L")
+        # Simplificado: una sola opción por acción; se aplicará a pedido o lista según contexto
         # Acciones utilitarias también disponibles por clic derecho
         self.menu_contextual.add_command(label="⏰ Próximos a Vencer", command=self.mostrar_proximos_vencer)
         self.menu_contextual.add_command(label="🔔 Test Sonido", command=self.test_notificacion)
@@ -2263,7 +2355,7 @@ class GestorListaEspera:
         try:
             # Crear ventana de entrada con mejor diseño
             ventana = tk.Toplevel(self.root)
-            ventana.title("🎨 Asignar Operador")
+            aplicar_icono_y_titulo(ventana, "Asignar Operador")
             ventana.geometry("500x350")
             ventana.resizable(False, False)
             ventana.transient(self.root)
@@ -2283,18 +2375,23 @@ class GestorListaEspera:
             main_frame = tk.Frame(ventana, bg="white", padx=30, pady=25)
             main_frame.pack(fill="both", expand=True)
             
-            # Título con icono y mejor diseño
+            # Encabezado: reemplazar título por LOGO
             titulo_frame = tk.Frame(main_frame, bg="white")
             titulo_frame.pack(fill="x", pady=(0, 10))
             
-            titulo_label = tk.Label(
-                titulo_frame,
-                text="🎨 Asignar Operador de Producción",
-                font=("Segoe UI", 16, "bold"),
-                fg="#1976D2",
-                bg="white"
-            )
-            titulo_label.pack()
+            try:
+                logo_path = obtener_ruta_absoluta_gestor("logo.png")
+                if os.path.exists(logo_path):
+                    from PIL import Image, ImageTk  # asegurado arriba, pero por seguridad en ejecutables
+                    logo_img = Image.open(logo_path)
+                    # Tamaño adecuado para el diálogo
+                    logo_img = logo_img.resize((180, 80), Image.Resampling.LANCZOS)
+                    ventana.logo_operador = ImageTk.PhotoImage(logo_img)
+                    tk.Label(titulo_frame, image=ventana.logo_operador, bg="white").pack()
+                else:
+                    tk.Label(titulo_frame, text="PaintFlow", font=("Segoe UI", 16, "bold"), fg="#1976D2", bg="white").pack()
+            except Exception:
+                tk.Label(titulo_frame, text="PaintFlow", font=("Segoe UI", 16, "bold"), fg="#1976D2", bg="white").pack()
             
             # Línea decorativa
             linea_decorativa = tk.Frame(main_frame, height=2, bg="#1976D2")
@@ -2860,19 +2957,23 @@ class GestorListaEspera:
             messagebox.showwarning("Estado", f"El pedido ya está en estado: {estado_actual}")
             return
         
-        # Solicitar operador explícitamente; si cancela, no iniciar
+        # Si pertenece a una lista (misma factura con más de un elemento pendiente/en espera), aplicar a toda la lista
+        factura_sel = self._obtener_factura_seleccionada()
+        try:
+            if factura_sel:
+                cantidad_en_lista = self._contar_items_factura(factura_sel, estados=["Pendiente", "En Espera"])
+                if cantidad_en_lista and cantidad_en_lista > 1:
+                    # Reutiliza el flujo de lista (pide operador una vez)
+                    self.iniciar_lista_completa()
+                    return
+        except Exception:
+            pass
+
+        # Caso individual: solicitar operador y procesar solo el seleccionado
         operador = self.seleccionar_operador()
         if not operador or not str(operador).strip():
-            # Fallback opcional al operador por defecto si desea evitar bloqueo
-            # operador = self._resolver_operador_por_defecto()
             return
-        
-        # Usar threading para evitar congelamiento
-        threading.Thread(
-            target=self._iniciar_produccion_async,
-            args=(id_profesional, operador),
-            daemon=True
-        ).start()
+        threading.Thread(target=self._iniciar_produccion_async, args=(id_profesional, operador), daemon=True).start()
 
     def _resolver_operador_por_defecto(self):
         """Obtiene el operador por defecto: nombre completo del usuario o su username."""
@@ -2912,6 +3013,8 @@ class GestorListaEspera:
             self.tree.bind('<Control-p>', self._atajo_imprimir)
             self.tree.bind('<Control-P>', self._atajo_imprimir)
             self.tree.bind('<Delete>', self._atajo_cancelar)
+            self.tree.bind('<Control-l>', lambda e: self.mostrar_formula())
+            self.tree.bind('<Control-L>', lambda e: self.mostrar_formula())
         except Exception as e:
             print(f"⚠️ No se pudieron configurar atajos: {e}")
 
@@ -2932,8 +3035,9 @@ class GestorListaEspera:
         try:
             selection = self.tree.selection()
             if not selection:
-                # Sin selección: deshabilitar acciones que requieren una fila (incluye lista por factura)
-                for idx in (0, 1, 2, 3, 4, 5, 10):
+                # Sin selección: deshabilitar todas las entradas
+                total = self.menu_contextual.index("end") or 0
+                for idx in range(total + 1):
                     try:
                         self.menu_contextual.entryconfig(idx, state=tk.DISABLED)
                     except Exception:
@@ -2948,6 +3052,7 @@ class GestorListaEspera:
             finalizar_state = tk.NORMAL
             cancelar_state = tk.NORMAL
             imprimir_state = tk.DISABLED
+            formula_state = tk.NORMAL
 
             if estado in ("Pendiente", "En Espera"):
                 iniciar_state = tk.NORMAL
@@ -2969,10 +3074,238 @@ class GestorListaEspera:
             self.menu_contextual.entryconfig(0, state=iniciar_state)
             self.menu_contextual.entryconfig(1, state=finalizar_state)
             self.menu_contextual.entryconfig(2, state=imprimir_state)
-            # Índice del botón Cancelar tras agregar nuevas opciones
-            self.menu_contextual.entryconfig(10, state=cancelar_state)
+            # Fórmula está en índice 3
+            try:
+                self.menu_contextual.entryconfig(3, state=formula_state)
+            except Exception:
+                pass
+            # ÍNDICE DE CANCELAR: último
+            try:
+                cancel_idx = self.menu_contextual.index("end")
+                if cancel_idx is not None:
+                    self.menu_contextual.entryconfig(cancel_idx, state=cancelar_state)
+            except Exception:
+                pass
         except Exception as e:
             print(f"⚠️ No se pudo actualizar el menú contextual: {e}")
+
+    def _mapear_tipo_presentacion(self, presentacion):
+        """Mapea la presentación a tipo de fórmula. Solo para pintura 'Excello Premium'.
+        Acepta: cuarto, galón/galon, cubeta. Otras (1/2, 1/8) no aplican.
+        """
+        try:
+            pr = (presentacion or '').strip().lower()
+            if pr in ('cuarto', 'qt'):
+                return 'cuarto'
+            if pr in ('galón', 'galon', 'galon.', 'galón.'):
+                return 'galon'
+            if pr == 'cubeta':
+                return 'cubeta'
+        except Exception:
+            pass
+        return None
+
+    def _mapear_presentacion_tinte(self, presentacion):
+        """Mapea presentación de UI a claves de presentacion_tintes."""
+        pr = (presentacion or '').strip().lower()
+        mapa = {
+            '1/8': '1/8',
+            'octavo': '1/8',
+            'cuarto': 'QT',
+            'qt': 'QT',
+            'medio galón': '1/2',
+            'medio galon': '1/2',
+            '1/2': '1/2',
+            'galón': 'GALON',
+            'galon': 'GALON',
+        }
+        return mapa.get(pr)
+
+    def _obtener_datos_por_pintura(self, pintura_id):
+        """Obtiene filas de fórmula para una pintura (colorante, tipo, oz, 32s, 64s, 128s)."""
+        try:
+            conn = self.conectar_db()
+            if not conn:
+                return []
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 
+                        c.nombre AS colorante,
+                        pr.tipo,
+                        pr.oz,
+                        pr._32s,
+                        pr._64s,
+                        pr._128s
+                    FROM presentacion pr
+                    JOIN pintura p ON pr.id_pintura = p.id
+                    JOIN colorante c ON pr.id_colorante = c.id
+                    WHERE p.id = %s;
+                    """,
+                    (pintura_id,)
+                )
+                rows = cur.fetchall()
+            conn.close()
+            return rows
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return []
+
+    def _obtener_datos_por_tinte(self, tinte_id):
+        """Obtiene fórmula de tintes (colorante, tipo, cantidad)."""
+        try:
+            conn = self.conectar_db()
+            if not conn:
+                return []
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 
+                        c.nombre AS colorante,
+                        p.tipo,
+                        p.cantidad
+                    FROM presentacion_tintes p
+                    JOIN tintes t ON p.id_tinte = t.id
+                    JOIN colorantes_tintes c ON p.id_colorante_tinte = c.codigo
+                    WHERE t.id = %s;
+                    """,
+                    (tinte_id,)
+                )
+                rows = cur.fetchall()
+            conn.close()
+            return rows
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return []
+
+    def _crear_tabla_formula(self, parent, filas, titulo_cols):
+        """Crea un Treeview tabla con las filas y títulos de columnas dados."""
+        frame = ttk.Frame(parent)
+        frame.pack(fill="both", expand=True)
+        tree = ttk.Treeview(frame, columns=titulo_cols, show="headings", height=12)
+        for col in titulo_cols:
+            tree.heading(col, text=col)
+            ancho = 120 if col.lower() == 'colorante' else 70
+            tree.column(col, width=ancho, anchor='center')
+        vs = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vs.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vs.grid(row=0, column=1, sticky="ns")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        return tree
+
+    def mostrar_formula(self):
+        """Muestra una ventana con la fórmula correspondiente a la presentación seleccionada."""
+        try:
+            selection = self.tree.selection()
+            if not selection:
+                messagebox.showwarning("Selección", "Selecciona un pedido para ver su fórmula.")
+                return
+            iid = selection[0]
+            vals = self.tree.item(iid, 'values')
+            codigo = vals[2] if len(vals) > 2 else None
+            producto = (vals[3] if len(vals) > 3 else '') or ''
+
+            presentacion = ''
+            base = ''
+            try:
+                conn = self.conectar_db()
+                if conn:
+                    sucursal_usuario = obtener_sucursal_usuario(self.usuario_username)
+                    tabla_sucursal = obtener_tabla_sucursal(sucursal_usuario)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            SELECT presentacion, base
+                            FROM {tabla_sucursal}
+                            WHERE id_orden_profesional = %s
+                            LIMIT 1
+                            """,
+                            (iid,)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            presentacion = row[0] or ''
+                            base = row[1] or ''
+                    conn.close()
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+            win = tk.Toplevel(self.root)
+            aplicar_icono_y_titulo(win, "Fórmula")
+            win.transient(self.root)
+            win.grab_set()
+            win.geometry("520x420")
+
+            info = ttk.Label(win, text=f"Código: {codigo}    Producto: {producto}    Presentación: {presentacion}    Base: {base}",
+                             font=("Segoe UI", 10))
+            info.pack(padx=10, pady=(10, 6))
+
+            producto_l = producto.strip().lower()
+            # Pinturas: soportamos SOLO 'excello premium' como en LabelsApp
+            if producto_l == 'excello premium':
+                datos = self._obtener_datos_por_pintura(codigo)
+                if not datos:
+                    ttk.Label(win, text="No hay fórmula disponible para este código.").pack(pady=14)
+                    return
+                tipo = self._mapear_tipo_presentacion(presentacion)
+                if not tipo:
+                    ttk.Label(win, text="Presentación no disponible para este producto.").pack(pady=14)
+                    return
+                filas = []
+                for colorante, t, oz, s32, s64, s128 in datos:
+                    if (t or '').strip().lower() == tipo:
+                        def fmt(v):
+                            if v is None:
+                                return ''
+                            try:
+                                num = float(v)
+                                if math.isfinite(num):
+                                    return str(int(num)) if num.is_integer() else f"{num:.2f}".rstrip('0').rstrip('.')
+                            except Exception:
+                                pass
+                            return ''
+                        filas.append((colorante, fmt(oz), fmt(s32), fmt(s64), fmt(s128)))
+                tree = self._crear_tabla_formula(win, filas, ("Colorante", "oz", "32s", "64s", "128s"))
+                for f in filas:
+                    tree.insert('', 'end', values=f)
+            elif producto_l == 'tinte al thinner':
+                datos = self._obtener_datos_por_tinte(codigo)
+                if not datos:
+                    ttk.Label(win, text="No hay fórmula disponible para este tinte.").pack(pady=14)
+                    return
+                tipo_deseado = self._mapear_presentacion_tinte(presentacion)
+                if not tipo_deseado:
+                    ttk.Label(win, text="Presentación no soportada para este tinte.").pack(pady=14)
+                    return
+                filas = []
+                for colorante, tipo, cantidad in datos:
+                    if (tipo or '').strip().upper() == tipo_deseado:
+                        try:
+                            num = float(cantidad)
+                            cantidad_str = str(int(num)) if num.is_integer() else f"{num:.2f}".rstrip('0').rstrip('.')
+                        except Exception:
+                            cantidad_str = str(cantidad)
+                        filas.append((colorante, cantidad_str))
+                tree = self._crear_tabla_formula(win, filas, ("Colorante", tipo_deseado))
+                for f in filas:
+                    tree.insert('', 'end', values=f)
+            else:
+                ttk.Label(win, text=f"Producto no soportado para fórmula: {producto}").pack(pady=14)
+
+            ttk.Button(win, text="Cerrar", command=win.destroy).pack(pady=10)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo mostrar la fórmula: {e}")
     
     def _iniciar_produccion_async(self, id_profesional, usuario):
         """Proceso asíncrono para iniciar producción"""
@@ -3228,6 +3561,17 @@ class GestorListaEspera:
                 messagebox.showinfo("Impresión restringida", "Solo se puede imprimir cuando el pedido está En Proceso.")
                 return
 
+            # Si pertenece a lista con más de un elemento en proceso, imprimir toda la lista
+            factura_sel = self._obtener_factura_seleccionada()
+            try:
+                if factura_sel:
+                    cnt_proc = self._contar_items_factura(factura_sel, estados=['En Proceso'])
+                    if cnt_proc and cnt_proc > 1:
+                        self.imprimir_pendientes_lista()
+                        return
+            except Exception:
+                pass
+
             # Obtener datos del pedido desde la BD
             sucursal = obtener_sucursal_usuario(self.usuario_username)
             tabla = obtener_tabla_sucursal(sucursal)
@@ -3255,6 +3599,8 @@ class GestorListaEspera:
         except Exception as e:
             print(f"❌ Error en imprimir_etiqueta: {e}")
             messagebox.showerror("Error", f"Error al imprimir etiqueta: {e}")
+
+    # Eliminado: acción unificada por diálogo. Los handlers deciden si aplican a pedido o lista.
 
     # ====== Acciones por lista (misma factura) ======
     def _obtener_factura_seleccionada(self):
@@ -3425,6 +3771,17 @@ class GestorListaEspera:
         if estado_actual != "En Proceso":
             messagebox.showwarning("Estado", f"Solo se pueden finalizar pedidos en proceso. Estado actual: {estado_actual}")
             return
+
+        # Si pertenece a lista con más de un elemento en proceso, finalizar toda la lista
+        factura_sel = self._obtener_factura_seleccionada()
+        try:
+            if factura_sel:
+                cnt_proc = self._contar_items_factura(factura_sel, estados=['En Proceso'])
+                if cnt_proc and cnt_proc > 1:
+                    self.finalizar_lista()
+                    return
+        except Exception:
+            pass
         
         # Usar threading para evitar congelamiento
         threading.Thread(
@@ -3509,6 +3866,43 @@ class GestorListaEspera:
             self._mostrar_mensaje_impresion(f"✅ Pedido {id_profesional} finalizado")
         except Exception:
             pass
+
+    def _contar_items_factura(self, id_factura, estados=None):
+        """Cuenta pedidos por factura en la tabla de la sucursal.
+        - estados: lista de estados para filtrar (exactos, con TRIM). Si es None, cuenta todos.
+        Devuelve 0 ante error.
+        """
+        try:
+            if not id_factura:
+                return 0
+            sucursal = obtener_sucursal_usuario(self.usuario_username)
+            tabla = obtener_tabla_sucursal(sucursal)
+            conn = self.conectar_db()
+            if not conn:
+                return 0
+            cur = conn.cursor()
+            if estados:
+                placeholders = ",".join(["%s"] * len(estados))
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {tabla}
+                    WHERE id_factura = %s AND TRIM(COALESCE(estado,'')) IN ({placeholders})
+                    """,
+                    tuple([id_factura] + estados),
+                )
+            else:
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {tabla} WHERE id_factura = %s",
+                    (id_factura,),
+                )
+            n = cur.fetchone()[0]
+            cur.close(); conn.close()
+            try:
+                return int(n)
+            except Exception:
+                return 0
+        except Exception:
+            return 0
     
     def cancelar_pedido(self):
         """Cancela un pedido"""
@@ -3788,7 +4182,7 @@ class GestorListaEspera:
     def mostrar_reportes(self):
         """Muestra ventana de reportes históricos"""
         ventana_reportes = ttk.Toplevel(self.root)
-        ventana_reportes.title("📊 Reportes Históricos")
+        aplicar_icono_y_titulo(ventana_reportes, "Reportes Históricos")
         ventana_reportes.geometry("800x600")
         
         # Frame principal
@@ -4023,7 +4417,7 @@ class GestorListaEspera:
             
             # Crear ventana emergente con detalles
             ventana = ttk.Toplevel(self.root)
-            ventana.title("⚠️ Pedidos Próximos a Vencer")
+            aplicar_icono_y_titulo(ventana, "Pedidos Próximos a Vencer")
             ventana.geometry("800x400")
             
             ttk.Label(ventana, text="⚠️ PEDIDOS PRÓXIMOS A VENCER (Menos de 30 minutos)", 
@@ -4397,14 +4791,32 @@ class GestorListaEspera:
         self.root.mainloop()
 
 if __name__ == "__main__":
-    # Ejecutar sistema de login integrado
+    # Crear root base y ejecutar login como Toplevel para mantener un único mainloop
     debug_log("Iniciando sistema de login para coloristas...")
-    usuario_info, sucursal_info = ejecutar_login_colorista()
+    # Usar ttkbootstrap Window para que el login herede correctamente el tema azul
+    try:
+        base_root = ttk.Window(themename="flatly")
+    except Exception:
+        base_root = tk.Tk()
+    try:
+        base_root.withdraw()  # ocultar mientras se muestra el login
+    except Exception:
+        pass
+
+    usuario_info, sucursal_info = ejecutar_login_colorista(master=base_root)
     
     if usuario_info:
         print(f"✅ Usuario autenticado: {usuario_info['username']} ({usuario_info['rol']}) - {sucursal_info}")
-        app = GestorListaEspera(usuario_info, sucursal_info)
+        try:
+            base_root.deiconify()
+        except Exception:
+            pass
+        app = GestorListaEspera(usuario_info, sucursal_info, master=base_root)
         app.run()
     else:
         print("❌ No se pudo autenticar usuario")
-        sys.exit(1)
+        try:
+            base_root.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
