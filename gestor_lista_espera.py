@@ -160,7 +160,7 @@ def cargar_sonido():
 
 APP_VERSION = "1.7.1"
 URL_VERSION = "https://gestor-flks.onrender.com/Version.txt"
-URL_EXE = "https://gestor-flks.onrender.com/Gestor.exe"
+URL_EXE = "https://gestor-flks.onrender.com/PaintFlow.exe"
 
 def verificar_dependencias_criticas():
     """Verifica que todas las dependencias críticas estén disponibles"""
