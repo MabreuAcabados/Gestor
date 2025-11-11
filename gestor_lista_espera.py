@@ -2,19 +2,206 @@
 Sistema de Gestión de Lista de Espera/Cola de Producción
 Conecta con base de datos PostgreSQL en Render
 Vinculado por sucursal
+
+Versión 1.6.2 - Optimización para Múltiples Coloristas:
+- 🔓 Eliminado bloqueo de iniciar procesos (permite múltiples coloristas trabajar simultáneamente)
+- 🔒 Mantenido bloqueo de 4 minutos SOLO para finalizar (evita finalizar procesos incompletos)
+- 🛠️ Corregido error de fuente en checkbox (compatible con ttkbootstrap)
+- 👥 Optimizado para entornos con múltiples coloristas trabajando diferentes facturas
+- ⚡ Mayor fluidez en el inicio de procesos de producción
+
+Versión 1.6.1 - Mejoras de Interfaz de Usuario:
+- 📝 Fuentes más grandes en toda la interfaz (mejor legibilidad)
+- 📊 Encabezados de tabla con fuente 12pt bold
+- 🔤 Contenido de tabla con fuente 11pt 
+- 📐 Anchos de columnas aumentados para mejor visualización
+- 🏷️ Altura de filas aumentada (30px) para mejor espaciado
+- 🧮 Campo "Base" cambiado por "Cantidad" en vista de fórmulas
+- 🎨 Mejor experiencia visual general
+
+Versión 1.6.0 - Mejoras de Seguridad y Control de Procesos:
+- ✅ Confirmación obligatoria para cancelar pedidos (evita eliminaciones accidentales)
+- 🔒 Bloqueo automático de 4 minutos SOLO al finalizar procesos (permite completar correctamente)
+- ⚠️ Confirmación para cerrar aplicación con procesos activos
+- 📋 Confirmación para iniciar/finalizar listas completas
+- 🔔 Indicadores visuales del estado de bloqueo en tiempo real
+- 🛡️ Protección contra interrupciones de procesos críticos
 """
 
+# === IMPORTACIONES SEGURAS (NÚCLEO) ===
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from tkinter import messagebox, simpledialog
-import psycopg2
 import json
 import base64
+import sys
+import os
+import threading
+import time
+import tempfile
+import math
+from datetime import datetime, date, timedelta
+import hashlib
 
-APP_VERSION = "1.5.1"
+# === SISTEMA DE CARGA DIFERIDA PARA EVITAR ERRORES DLL ===
+# Variables globales para controlar disponibilidad de módulos
+POSTGRES_AVAILABLE = False
+WIN32_AVAILABLE = False
+SONIDO_DISPONIBLE = None
+PIL_AVAILABLE = False
+REPORTLAB_AVAILABLE = False
+PANDAS_AVAILABLE = False
+
+# Placeholders para módulos que se cargarán bajo demanda
+psycopg2 = None
+win32print = None
+win32api = None
+Image = None
+ImageTk = None
+pd = None
+canvas = None
+colors = None
+Table = None
+TableStyle = None
+landscape = None
+A4 = None
+
+def cargar_psycopg2():
+    """Carga psycopg2 solo cuando es necesario"""
+    global psycopg2, POSTGRES_AVAILABLE
+    if not POSTGRES_AVAILABLE:
+        try:
+            import psycopg2 as pg2
+            psycopg2 = pg2
+            POSTGRES_AVAILABLE = True
+        except Exception:
+            POSTGRES_AVAILABLE = False
+    return POSTGRES_AVAILABLE
+
+def cargar_win32():
+    """Carga win32 solo cuando es necesario"""
+    global win32print, win32api, WIN32_AVAILABLE
+    if not WIN32_AVAILABLE:
+        try:
+            import win32print as wp
+            import win32api as wa
+            win32print = wp
+            win32api = wa
+            WIN32_AVAILABLE = True
+        except Exception:
+            WIN32_AVAILABLE = False
+    return WIN32_AVAILABLE
+
+def cargar_pil():
+    """Carga PIL solo cuando es necesario"""
+    global Image, ImageTk, PIL_AVAILABLE
+    if not PIL_AVAILABLE:
+        try:
+            from PIL import Image as Img, ImageTk as ImgTk
+            Image = Img
+            ImageTk = ImgTk
+            PIL_AVAILABLE = True
+        except Exception:
+            PIL_AVAILABLE = False
+    return PIL_AVAILABLE
+
+def cargar_reportlab():
+    """Carga ReportLab solo cuando es necesario"""
+    global canvas, colors, Table, TableStyle, landscape, A4, REPORTLAB_AVAILABLE
+    if not REPORTLAB_AVAILABLE:
+        try:
+            from reportlab.pdfgen import canvas as cv
+            from reportlab.lib import colors as cl
+            from reportlab.platypus import Table as Tb, TableStyle as Ts
+            from reportlab.lib.pagesizes import landscape as ls, A4 as A4_size
+            canvas = cv
+            colors = cl
+            Table = Tb
+            TableStyle = Ts
+            landscape = ls
+            A4 = A4_size
+            REPORTLAB_AVAILABLE = True
+        except Exception:
+            REPORTLAB_AVAILABLE = False
+    return REPORTLAB_AVAILABLE
+
+def cargar_pandas():
+    """Carga pandas solo cuando es necesario"""
+    global pd, PANDAS_AVAILABLE
+    if not PANDAS_AVAILABLE:
+        try:
+            import pandas as pandas_module
+            pd = pandas_module
+            PANDAS_AVAILABLE = True
+        except Exception:
+            PANDAS_AVAILABLE = False
+    return PANDAS_AVAILABLE
+
+def cargar_sonido():
+    """Configura sistema de sonido solo cuando es necesario"""
+    global SONIDO_DISPONIBLE
+    if SONIDO_DISPONIBLE is None:
+        try:
+            import winsound
+            SONIDO_DISPONIBLE = "winsound"
+        except Exception:
+            try:
+                import pygame
+                pygame.mixer.init()
+                SONIDO_DISPONIBLE = "pygame"
+            except Exception:
+                try:
+                    import playsound
+                    SONIDO_DISPONIBLE = "playsound"
+                except Exception:
+                    SONIDO_DISPONIBLE = False
+    return SONIDO_DISPONIBLE
+
+APP_VERSION = "1.6.3"
 URL_VERSION = "https://gestor-flks.onrender.com/Version.txt"
 URL_EXE = "https://gestor-flks.onrender.com/Gestor.exe"
+
+def verificar_dependencias_criticas():
+    """Verifica que todas las dependencias críticas estén disponibles"""
+    errores = []
+    advertencias = []
+    
+    # Verificar PostgreSQL (crítico)
+    if not cargar_psycopg2():
+        errores.append("• Driver PostgreSQL (psycopg2) no disponible")
+    
+    # Verificar dependencias opcionales
+    if not cargar_win32():
+        advertencias.append("• Impresión directa deshabilitada")
+    
+    if not cargar_sonido():
+        advertencias.append("• Notificaciones de sonido deshabilitadas")
+    
+    # Mostrar advertencias (no bloquean)
+    if advertencias:
+        print("⚠️ Funcionalidades limitadas:")
+        for adv in advertencias:
+            print(f"  {adv}")
+    
+    if errores:
+        mensaje_error = "ERRORES CRÍTICOS DETECTADOS:\n\n" + "\n".join(errores) + "\n\n"
+        mensaje_error += "La aplicación podría no funcionar correctamente.\n"
+        mensaje_error += "¿Desea continuar de todos modos?"
+        
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        root = tk.Tk()
+        root.withdraw()  # Ocultar ventana principal
+        
+        continuar = messagebox.askyesno("⚠️ Advertencia de Dependencias", mensaje_error)
+        root.destroy()
+        
+        return continuar
+    
+    print("✅ Todas las dependencias críticas están disponibles")
+    return True
 
 # === FUNCIONES DE ALERTBOX CON ÍCONOS ===
 
@@ -37,20 +224,8 @@ def mostrar_info(titulo, mensaje, parent=None):
 def mostrar_pregunta(titulo, mensaje, parent=None):
     """Muestra pregunta Si/No con ícono"""
     return messagebox.askyesno(f"❓ {titulo}", mensaje, parent=parent)
-from datetime import datetime, date, timedelta
-import pandas as pd
-import hashlib
-import sys
-import os
-from PIL import Image, ImageTk
-import threading
-import time
-import tempfile
-import math
-from reportlab.lib.pagesizes import landscape, A4
-from reportlab.lib import colors
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
+
+# Las importaciones ahora se manejan con carga diferida arriba
 import subprocess
 import ctypes
 from typing import Any
@@ -82,25 +257,79 @@ def is_newer(latest, current):
 def run_windows_updater(new_exe_path, current_exe_path):
     # Creamos un .bat temporal que espera a que termine el proceso actual,
     # reemplaza el exe y lanza la nueva versión.
+    print(f"🔄 DEBUG UPDATE: Iniciando actualización")
+    print(f"🔄 DEBUG UPDATE: Archivo nuevo: {new_exe_path}")
+    print(f"🔄 DEBUG UPDATE: Archivo actual: {current_exe_path}")
+    
     bat = tempfile.NamedTemporaryFile(delete=False, suffix=".bat", mode="w", encoding="utf-8")
     new_p = new_exe_path.replace("/", "\\")
     cur_p = current_exe_path.replace("/", "\\")
     exe_name = os.path.basename(cur_p)
+    backup_p = cur_p.replace(".exe", "_backup.exe")
+    
+    print(f"🔄 DEBUG UPDATE: Script bat: {bat.name}")
+    print(f"🔄 DEBUG UPDATE: Proceso a esperar: {exe_name}")
+    
     bat_contents = f"""@echo off
-timeout /t 2 /nobreak > nul
+echo [UPDATE] Iniciando actualizacion...
+timeout /t 3 /nobreak > nul
+
+echo [UPDATE] Esperando que termine el proceso {exe_name}...
 :waitloop
-tasklist /FI "IMAGENAME eq {exe_name}" | find /I "{exe_name}" > nul
+tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | find /I "{exe_name}" > nul
 if %ERRORLEVEL%==0 (
+  echo [UPDATE] Proceso aun activo, esperando...
   timeout /t 1 > nul
   goto waitloop
 )
+
+echo [UPDATE] Proceso terminado, procediendo con actualizacion...
+
+REM Crear respaldo del ejecutable actual
+if exist "{cur_p}" (
+    echo [UPDATE] Creando respaldo...
+    copy /Y "{cur_p}" "{backup_p}" > nul
+    if %ERRORLEVEL% neq 0 (
+        echo [UPDATE] Error creando respaldo
+        goto error_exit
+    )
+)
+
+REM Reemplazar ejecutable
+echo [UPDATE] Reemplazando ejecutable...
 move /Y "{new_p}" "{cur_p}"
+if %ERRORLEVEL% neq 0 (
+    echo [UPDATE] Error al reemplazar archivo, restaurando respaldo...
+    if exist "{backup_p}" (
+        move /Y "{backup_p}" "{cur_p}" > nul
+    )
+    goto error_exit
+)
+
+echo [UPDATE] Actualizacion exitosa!
+
+REM Eliminar respaldo si todo salió bien
+if exist "{backup_p}" (
+    del /Q "{backup_p}" > nul
+)
+
+echo [UPDATE] Iniciando nueva version...
 start "" "{cur_p}"
+goto cleanup
+
+:error_exit
+echo [UPDATE] Error en la actualizacion
+pause
+
+:cleanup
+echo [UPDATE] Eliminando script temporal...
 del "%~f0"
 """
     bat.write(bat_contents)
     bat.close()
-    # lanzar el .bat y salir
+    
+    # Hacer el bat ejecutable y lanzarlo
+    print(f"🔄 DEBUG UPDATE: Ejecutando script de actualización")
     subprocess.Popen(["cmd", "/c", bat.name], creationflags=subprocess.CREATE_NEW_CONSOLE)
     sys.exit(0)
 
@@ -111,6 +340,102 @@ def _is_frozen_exe():
 def _current_binary_path():
     """Devuelve la ruta del binario actual (exe si frozen, script si no)."""
     return sys.executable if _is_frozen_exe() else sys.argv[0]
+
+def mostrar_ventana_actualizacion():
+    """Muestra una ventana de progreso animada durante la actualización"""
+    import threading
+    
+    # Crear ventana de progreso
+    progress_window = tk.Tk()
+    progress_window.title("PaintFlow - Actualización")
+    progress_window.geometry("400x200")
+    progress_window.resizable(False, False)
+    progress_window.configure(bg="#f0f0f0")
+    
+    # Centrar ventana
+    progress_window.update_idletasks()
+    x = (progress_window.winfo_screenwidth() // 2) - (400 // 2)
+    y = (progress_window.winfo_screenheight() // 2) - (200 // 2)
+    progress_window.geometry(f"400x200+{x}+{y}")
+    
+    try:
+        aplicar_icono_y_titulo(progress_window, "Actualización")
+    except:
+        pass
+    
+    # Contenedor principal
+    main_frame = tk.Frame(progress_window, bg="#f0f0f0")
+    main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    
+    # Título
+    title_label = tk.Label(
+        main_frame, 
+        text="🔄 Actualizando PaintFlow", 
+        font=("Segoe UI", 16, "bold"),
+        bg="#f0f0f0",
+        fg="#1976D2"
+    )
+    title_label.pack(pady=(0, 10))
+    
+    # Mensaje de estado
+    status_label = tk.Label(
+        main_frame,
+        text="Preparando descarga...",
+        font=("Segoe UI", 10),
+        bg="#f0f0f0",
+        fg="#333333"
+    )
+    status_label.pack(pady=(0, 15))
+    
+    # Barra de progreso
+    try:
+        from tkinter import ttk
+        progress_bar = ttk.Progressbar(
+            main_frame,
+            mode='indeterminate',
+            length=300
+        )
+        progress_bar.pack(pady=(0, 15))
+        progress_bar.start(10)  # Animación cada 10ms
+    except:
+        # Fallback si ttk no está disponible
+        progress_label = tk.Label(
+            main_frame,
+            text="⏳ Descargando...",
+            font=("Segoe UI", 12),
+            bg="#f0f0f0",
+            fg="#1976D2"
+        )
+        progress_label.pack(pady=(0, 15))
+    
+    # Texto informativo
+    info_label = tk.Label(
+        main_frame,
+        text="Por favor espere mientras se descarga\nla nueva versión del sistema.",
+        font=("Segoe UI", 9),
+        bg="#f0f0f0",
+        fg="#666666",
+        justify="center"
+    )
+    info_label.pack()
+    
+    # Función para actualizar el estado
+    def actualizar_estado(mensaje):
+        status_label.config(text=mensaje)
+        progress_window.update()
+    
+    # Función para cerrar ventana
+    def cerrar_ventana():
+        try:
+            progress_window.destroy()
+        except:
+            pass
+    
+    # Almacenar referencias para uso externo
+    progress_window.actualizar_estado = actualizar_estado
+    progress_window.cerrar_ventana = cerrar_ventana
+    
+    return progress_window
 
 def check_update():
     """Verifica versiones y actualiza sólo si corre como EXE en Windows.
@@ -137,39 +462,198 @@ def check_update():
             return
 
         if is_newer(latest, APP_VERSION):
-            # En desarrollo (no frozen), notificar en lugar de actualizar
+            # En desarrollo (no frozen), mostrar notificación elegante en lugar de actualizar
             if os.name == "nt" and not is_frozen:
                 try:
+                    # Crear ventana de notificación
+                    notif_window = tk.Tk()
+                    notif_window.title("PaintFlow - Nueva versión disponible")
+                    notif_window.geometry("450x250")
+                    notif_window.resizable(False, False)
+                    notif_window.configure(bg="#f8f9fa")
+                    
+                    # Centrar ventana
+                    notif_window.update_idletasks()
+                    x = (notif_window.winfo_screenwidth() // 2) - (450 // 2)
+                    y = (notif_window.winfo_screenheight() // 2) - (250 // 2)
+                    notif_window.geometry(f"450x250+{x}+{y}")
+                    
+                    try:
+                        aplicar_icono_y_titulo(notif_window, "Nueva versión")
+                    except:
+                        pass
+                    
+                    main_frame = tk.Frame(notif_window, bg="#f8f9fa")
+                    main_frame.pack(fill="both", expand=True, padx=30, pady=20)
+                    
+                    # Icono y título
+                    title_frame = tk.Frame(main_frame, bg="#f8f9fa")
+                    title_frame.pack(fill="x", pady=(0, 15))
+                    
+                    tk.Label(
+                        title_frame,
+                        text="🚀 Nueva versión disponible",
+                        font=("Segoe UI", 14, "bold"),
+                        bg="#f8f9fa",
+                        fg="#28a745"
+                    ).pack()
+                    
+                    # Información de versiones
+                    info_frame = tk.Frame(main_frame, bg="#f8f9fa")
+                    info_frame.pack(fill="x", pady=(0, 20))
+                    
+                    tk.Label(
+                        info_frame,
+                        text=f"Nueva versión: {latest}",
+                        font=("Segoe UI", 11, "bold"),
+                        bg="#f8f9fa",
+                        fg="#333333"
+                    ).pack(anchor="w")
+                    
+                    tk.Label(
+                        info_frame,
+                        text=f"Versión actual: {APP_VERSION}",
+                        font=("Segoe UI", 10),
+                        bg="#f8f9fa",
+                        fg="#666666"
+                    ).pack(anchor="w", pady=(5, 0))
+                    
+                    tk.Label(
+                        info_frame,
+                        text="Ejecuta el archivo EXE para actualizar automáticamente\no descarga la última versión del servidor.",
+                        font=("Segoe UI", 9),
+                        bg="#f8f9fa",
+                        fg="#666666",
+                        justify="left"
+                    ).pack(anchor="w", pady=(10, 0))
+                    
+                    # Botón cerrar
+                    btn_frame = tk.Frame(main_frame, bg="#f8f9fa")
+                    btn_frame.pack(fill="x")
+                    
+                    tk.Button(
+                        btn_frame,
+                        text="Entendido",
+                        font=("Segoe UI", 10),
+                        bg="#007bff",
+                        fg="white",
+                        relief="flat",
+                        padx=20,
+                        pady=8,
+                        command=notif_window.destroy
+                    ).pack(side="right")
+                    
+                    notif_window.mainloop()
+                except Exception:
+                    # Fallback al MessageBox original
                     msg = (
                         f"Hay una nueva versión disponible: {latest}\n\n"
                         f"Versión actual: {APP_VERSION}\n\n"
                         f"Ejecuta el EXE para actualizar automáticamente o descarga la última versión."
                     )
                     ctypes.windll.user32.MessageBoxW(0, msg, "Actualización disponible", 0x40)
-                except Exception:
-                    pass
                 return
 
             # Flujo normal de actualización cuando es EXE empaquetado (Windows)
             if os.name == "nt" and is_frozen:
+                # Mostrar ventana de progreso
+                try:
+                    progress_window = mostrar_ventana_actualizacion()
+                    progress_window.update()
+                except Exception as e:
+                    print(f"⚠️ DEBUG UPDATE: No se pudo crear ventana de progreso: {e}")
+                    progress_window = None
+                
                 base_path = os.path.dirname(_current_binary_path()) or os.getcwd()
-                new_exe = os.path.join(base_path, "Gestor_new.exe")
+                
+                # Usar un nombre único para evitar conflictos
+                timestamp = str(int(time.time()))
+                new_exe = os.path.join(base_path, f"Gestor_new_{timestamp}.exe")
+                
+                print(f"🔄 DEBUG UPDATE: Descargando a: {new_exe}")
+                print(f"🔄 DEBUG UPDATE: Directorio base: {base_path}")
+
+                if progress_window:
+                    progress_window.actualizar_estado("Verificando permisos...")
+
+                # Verificar permisos de escritura en el directorio
+                try:
+                    test_file = os.path.join(base_path, "test_write_permissions.tmp")
+                    with open(test_file, "w") as f:
+                        f.write("test")
+                    os.remove(test_file)
+                    print(f"🔄 DEBUG UPDATE: Permisos de escritura verificados")
+                except Exception as e:
+                    print(f"❌ DEBUG UPDATE: Sin permisos de escritura en {base_path}: {e}")
+                    if progress_window:
+                        progress_window.actualizar_estado("Error: Sin permisos de escritura")
+                        time.sleep(2)
+                        progress_window.cerrar_ventana()
+                    return
+
+                if progress_window:
+                    progress_window.actualizar_estado("Descargando nueva versión...")
 
                 # Descargar ejecutable
-                with requests.get(URL_EXE, stream=True, timeout=20, headers=headers) as resp:
-                    resp.raise_for_status()
-                    with open(new_exe, "wb") as f:
-                        for chunk in resp.iter_content(8192):
-                            if chunk:
-                                f.write(chunk)
+                try:
+                    with requests.get(URL_EXE, stream=True, timeout=20, headers=headers) as resp:
+                        resp.raise_for_status()
+                        total_size = int(resp.headers.get('content-length', 0))
+                        downloaded = 0
+                        
+                        with open(new_exe, "wb") as f:
+                            for chunk in resp.iter_content(8192):
+                                if chunk:
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    
+                                    # Actualizar progreso si conocemos el tamaño total
+                                    if progress_window and total_size > 0:
+                                        percent = (downloaded / total_size) * 100
+                                        progress_window.actualizar_estado(f"Descargando: {percent:.1f}%")
+                                    elif progress_window:
+                                        mb_downloaded = downloaded / (1024 * 1024)
+                                        progress_window.actualizar_estado(f"Descargado: {mb_downloaded:.1f} MB")
+                except Exception as e:
+                    print(f"❌ DEBUG UPDATE: Error en descarga: {e}")
+                    if progress_window:
+                        progress_window.actualizar_estado("Error en la descarga")
+                        time.sleep(2)
+                        progress_window.cerrar_ventana()
+                    return
+                
+                print(f"🔄 DEBUG UPDATE: Descarga completada")
+
+                if progress_window:
+                    progress_window.actualizar_estado("Verificando descarga...")
 
                 # Verificación mínima de tamaño
                 try:
-                    if os.path.getsize(new_exe) < 100_000:
+                    size = os.path.getsize(new_exe)
+                    print(f"🔄 DEBUG UPDATE: Tamaño del archivo descargado: {size} bytes")
+                    if size < 100_000:
+                        print(f"🔄 DEBUG UPDATE: Archivo muy pequeño, cancelando actualización")
+                        if progress_window:
+                            progress_window.actualizar_estado("Error: Archivo incompleto")
+                            time.sleep(2)
+                            progress_window.cerrar_ventana()
                         return
-                except Exception:
+                except Exception as e:
+                    print(f"🔄 DEBUG UPDATE: Error verificando tamaño: {e}")
+                    if progress_window:
+                        progress_window.actualizar_estado("Error verificando descarga")
+                        time.sleep(2)
+                        progress_window.cerrar_ventana()
                     return
 
+                if progress_window:
+                    progress_window.actualizar_estado("Preparando instalación...")
+                    time.sleep(1)
+                    progress_window.actualizar_estado("Cerrando aplicación actual...")
+                    time.sleep(1)
+                    progress_window.cerrar_ventana()
+
+                print(f"🔄 DEBUG UPDATE: Iniciando proceso de reemplazo...")
                 run_windows_updater(new_exe, _current_binary_path())
                 return
 
@@ -189,14 +673,7 @@ if __name__ == "__main__":
 
 
 
-# Módulos para impresión (intentar importar win32print)
-WIN32_AVAILABLE = False
-try:
-    import win32print
-    import win32api
-    WIN32_AVAILABLE = True
-except ImportError:
-    WIN32_AVAILABLE = False
+# Los módulos Win32 ahora se manejan con carga diferida arriba
 
 def obtener_sucursal_usuario(usuario_id):
     """Detecta la sucursal basándose en el ID del usuario"""
@@ -289,22 +766,7 @@ def deducir_presentacion_desde_cantidad(cantidad):
     else:
         return "Cuarto"  # Default para cantidades pequeñas
 
-# Importar librerías de sonido con manejo de errores
-try:
-    import winsound  # Para Windows
-    SONIDO_DISPONIBLE = "winsound"
-except ImportError:
-    try:
-        import pygame  # Alternativa multiplataforma
-        pygame.mixer.init()
-        SONIDO_DISPONIBLE = "pygame"
-    except ImportError:
-        try:
-            import playsound  # Otra alternativa
-            SONIDO_DISPONIBLE = "playsound"
-        except ImportError:
-            SONIDO_DISPONIBLE = None
-            print("⚠️ No se encontraron librerías de sonido. Las notificaciones serán silenciosas.")
+# El sistema de sonido ahora se maneja con carga diferida arriba
 
 # Configuración de la base de datos
 DB_CONFIG = {
@@ -472,49 +934,64 @@ class NotificacionesSonoras:
         try:
             sonido = self.sonidos.get(tipo_sonido, self.sonidos['nuevo_pedido'])
             
-            if SONIDO_DISPONIBLE == "winsound":
-                # Usar Windows Sound
-                archivo_sonido = obtener_ruta_absoluta_gestor(sonido['archivo'])
-                if os.path.exists(archivo_sonido):
-                    winsound.PlaySound(archivo_sonido, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                else:
-                    # Generar secuencia de campanas con winsound
+            # Cargar y usar sistema de sonido disponible
+            sistema_sonido = cargar_sonido()
+            
+            if sistema_sonido == "winsound":
+                # Cargar winsound dinámicamente
+                try:
+                    import winsound
+                    archivo_sonido = obtener_ruta_absoluta_gestor(sonido['archivo'])
+                    if os.path.exists(archivo_sonido):
+                        winsound.PlaySound(archivo_sonido, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                    else:
+                        # Generar secuencia de campanas con winsound
+                        secuencia = sonido.get('secuencia', [(800, 200)])
+                        
+                        print(f"🔔 Reproduciendo: {sonido.get('descripcion', tipo_sonido)}")
+                        
+                        for frecuencia, duracion in secuencia:
+                            try:
+                                winsound.Beep(frecuencia, duracion)
+                            except Exception as e:
+                                print(f"⚠️ Error reproduciendo beep {frecuencia}Hz: {e}")
+                                # Fallback con frecuencia estándar
+                                try:
+                                    winsound.Beep(800, 300)
+                                except:
+                                    print(f"🔔 Sonido fallback también falló - {sonido.get('descripcion', tipo_sonido)}")
+                except ImportError:
+                    print("⚠️ winsound no disponible")
+            
+            elif sistema_sonido == "pygame":
+                # Cargar pygame dinámicamente
+                try:
+                    import pygame
                     secuencia = sonido.get('secuencia', [(800, 200)])
-                    
                     print(f"🔔 Reproduciendo: {sonido.get('descripcion', tipo_sonido)}")
                     
                     for frecuencia, duracion in secuencia:
+                        # Usar pygame mixer para generar tonos
                         try:
-                            winsound.Beep(frecuencia, duracion)
-                        except Exception as e:
-                            print(f"⚠️ Error reproduciendo beep {frecuencia}Hz: {e}")
-                            # Fallback con frecuencia estándar
-                            try:
-                                winsound.Beep(800, 300)
-                            except:
-                                print(f"🔔 Sonido fallback también falló - {sonido.get('descripcion', tipo_sonido)}")
+                            # Crear un beep simple
+                            pygame.mixer.Sound.play(pygame.mixer.Sound(buffer=b'\x00\x7f' * int(44100 * duracion / 1000)))
+                            pygame.time.wait(duracion + 50)
+                        except:
+                            print(f"Campana: {frecuencia}Hz por {duracion}ms")
+                except ImportError:
+                    print("⚠️ pygame no disponible")
             
-            elif SONIDO_DISPONIBLE == "pygame":
-                # Generar secuencia simple con pygame
-                secuencia = sonido.get('secuencia', [(800, 200)])
-                print(f"🔔 Reproduciendo: {sonido.get('descripcion', tipo_sonido)}")
-                
-                for frecuencia, duracion in secuencia:
-                    # Usar pygame mixer para generar tonos
-                    try:
-                        # Crear un beep simple
-                        pygame.mixer.Sound.play(pygame.mixer.Sound(buffer=b'\x00\x7f' * int(44100 * duracion / 1000)))
-                        pygame.time.wait(duracion + 50)
-                    except:
-                        print(f"Campana: {frecuencia}Hz por {duracion}ms")
-            
-            elif SONIDO_DISPONIBLE == "playsound":
-                # Usar archivo si existe
-                archivo_sonido = obtener_ruta_absoluta_gestor(sonido['archivo'])
-                if os.path.exists(archivo_sonido):
-                    playsound.playsound(archivo_sonido, False)
-                else:
-                    print(f"🔔 {sonido.get('descripcion', tipo_sonido)} (sin archivo de audio)")
+            elif sistema_sonido == "playsound":
+                # Cargar playsound dinámicamente
+                try:
+                    import playsound
+                    archivo_sonido = obtener_ruta_absoluta_gestor(sonido['archivo'])
+                    if os.path.exists(archivo_sonido):
+                        playsound.playsound(archivo_sonido, False)
+                    else:
+                        print(f"🔔 {sonido.get('descripcion', tipo_sonido)} (sin archivo de audio)")
+                except ImportError:
+                    print("⚠️ playsound no disponible")
             
             else:
                 # Sin sonido disponible, solo mostrar en consola
@@ -782,9 +1259,23 @@ def generar_zpl_gestor(codigo, descripcion, producto, terminacion, presentacion,
     """
     w, h = 406, 203  # 2x1 pulgadas a 203 dpi
     
-    # Ajuste dinámico de fuentes según longitud del contenido (igual que LabelsApp)
-    font_codigo = 70 if len(codigo) <= 6 else 70 if len(codigo) <= 8 else 30
-    font_desc = 24 if len(descripcion) > 25 else 28
+    # Detectar si el código sigue el patrón SW 0000 (SW + espacio + 4 números exactos)
+    import re
+    patron_sw = re.compile(r'^SW \d{4}$')
+    # Solo considerar el código sin espacios adicionales para mayor precisión
+    codigo_limpio = codigo.strip()
+    es_codigo_sw = bool(patron_sw.match(codigo_limpio)) and len(codigo_limpio) == 7
+    
+    # Ajuste dinámico de fuentes según longitud del contenido y patrón
+    if es_codigo_sw:
+        # Para códigos SW 0000: usar tamaños normales
+        font_codigo = 70 if len(codigo) <= 6 else 70 if len(codigo) <= 8 else 30
+        font_desc = 20 if len(descripcion) > 25 else 24  # Descripción más pequeña
+    else:
+        # Para productos que NO siguen el patrón SW 0000: código y descripción más pequeños
+        font_codigo = 50 if len(codigo) <= 6 else 45 if len(codigo) <= 8 else 25
+        font_desc = 18 if len(descripcion) > 25 else 20  # Descripción aún más pequeña
+    
     font_producto = 22 if len(f"{producto}/{terminacion}") > 20 else 26
     
     # Posiciones optimizadas - igual que LabelsApp
@@ -874,13 +1365,25 @@ def generar_zpl_gestor(codigo, descripcion, producto, terminacion, presentacion,
         zpl += f"^CF0,{font_desc}\n"
         zpl += f"^FO{margin},{y_desc}^FB{w-margin*2-5},{desc_lines},0,C,0^FD{desc_text}^FS\n"
     
-    # === PRODUCTO/TERMINACIÓN (Destacado y centrado) - SIN PRESENTACIÓN ===
+    # === PRODUCTO/TERMINACIÓN (sin presentación) ===
+    producto_texto = f"{producto.upper()}/{terminacion.upper()}"
     zpl += f"^CF0,{font_producto}\n"
-    zpl += f"^FO{margin-10},{y_producto}^FB{w-margin*2+15},1,0,C,0^FD{producto.upper()}/{terminacion.upper()}^FS\n"
+    zpl += f"^FO{margin-10},{y_producto}^FB{w-margin*2+15},1,0,C,0^FD{producto_texto}^FS\n"
     
-    # === OPERADOR (si existe) — ahora más grande y más abajo (última línea) ===
+    # === OPERADOR CON PRESENTACIÓN (si existe) — ahora más grande y más abajo (última línea) ===
     if operador:
-        op_text = ("OP: " + operador)[:24]
+        # Obtener sufijo de presentación
+        sufijo_presentacion = obtener_sufijo_presentacion(presentacion) if presentacion else ""
+        
+        # Construir texto del operador con sufijo
+        if sufijo_presentacion:
+            op_text = f"OP: {operador} - {sufijo_presentacion}"
+        else:
+            op_text = f"OP: {operador}"
+        
+        # Limitar longitud
+        op_text = op_text[:28]
+        
         zpl += (
             f"^CF0,{max(18, font_info+2)}\n"
             f"^FO{margin},{y_info}^FB{w-margin*2-5},1,0,C,0^FD{op_text}^FS\n"
@@ -942,7 +1445,8 @@ def generar_zpl_gestor(codigo, descripcion, producto, terminacion, presentacion,
 
 def imprimir_zebra_zpl_gestor(zpl_code):
     """Imprime código ZPL en impresora Zebra desde el gestor"""
-    if not WIN32_AVAILABLE:
+    # Cargar módulos de impresión dinámicamente
+    if not cargar_win32():
         mostrar_error("Error de Impresión", "Módulos de impresión no disponibles en el sistema")
         return False
 
@@ -1073,6 +1577,12 @@ class SistemaLoginColorista:
 
         Si se proporciona `master`, se crea como una Toplevel modal para usar un único root.
         """
+        # Cargar PIL antes de usar imágenes
+        if not cargar_pil():
+            print("⚠️ DEBUG LOGIN: PIL no está disponible")
+        else:
+            print("✅ DEBUG LOGIN: PIL cargado correctamente")
+            
         if master is not None:
             ventana_login = tk.Toplevel(master)
             try:
@@ -1153,16 +1663,24 @@ class SistemaLoginColorista:
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(2, 6))
 
         logo_path = obtener_ruta_absoluta_gestor("logo.png")
+        print(f"🔍 DEBUG LOGIN: Buscando logo en: {logo_path}")
+        print(f"🔍 DEBUG LOGIN: Logo existe: {os.path.exists(logo_path)}")
         if os.path.exists(logo_path):
             try:
+                # Asegurar que PIL está disponible
+                if not PIL_AVAILABLE:
+                    cargar_pil()
+                
                 logo_img = Image.open(logo_path)
                 logo_img = logo_img.resize((260, 260), Image.Resampling.LANCZOS)
                 self.logo_photo = ImageTk.PhotoImage(logo_img)
                 tk.Label(left_panel, image=self.logo_photo, bg="white").pack(anchor="nw", padx=0, pady=0)
+                print(f"✅ DEBUG LOGIN: Logo cargado exitosamente")
             except Exception as e:
-                print(f"Error cargando logo: {e}")
+                print(f"❌ DEBUG LOGIN: Error cargando logo: {e}")
                 tk.Label(left_panel, text="LISTA DE ESPERA", font=("Segoe UI", 18, "bold"), fg="#1976D2", bg="white").pack(anchor="nw", padx=0, pady=0)
         else:
+            print(f"⚠️ DEBUG LOGIN: Logo no encontrado, usando texto")
             tk.Label(left_panel, text="LISTA DE ESPERA", font=("Segoe UI", 18, "bold"), fg="#1976D2", bg="white").pack(anchor="nw", padx=0, pady=0)
 
         # Divisor
@@ -1214,13 +1732,13 @@ class SistemaLoginColorista:
         mostrar_row.pack(fill="x")
         chk_mostrar = ttk.Checkbutton(mostrar_row, text="", variable=mostrar_var, bootstyle="primary-round-toggle", command=toggle_password)
         chk_mostrar.pack(side="left")
-        tk.Label(mostrar_row, text="Mostrar contraseña", font=("Segoe UI", 9), bg="white", fg="#333333").pack(side="left", padx=(6, 0))
+        tk.Label(mostrar_row, text="Mostrar contraseña", font=("Segoe UI", 10), bg="white", fg="#333333").pack(side="left", padx=(6, 0))
 
         remember_row = tk.Frame(controls_frame, bg="white")
         remember_row.pack(fill="x", pady=(4, 0))
         chk_recordar_inline = ttk.Checkbutton(remember_row, text="", variable=recordar_acceso_var, bootstyle="primary-round-toggle")
         chk_recordar_inline.pack(side="left")
-        tk.Label(remember_row, text="Recordar usuario", font=("Segoe UI", 9), bg="white", fg="#333333").pack(side="left", padx=(6, 0))
+        tk.Label(remember_row, text="Recordar usuario", font=("Segoe UI", 10), bg="white", fg="#333333").pack(side="left", padx=(6, 0))
 
         mensaje_frame = tk.Frame(fields_frame, bg="white")
         mensaje_frame.pack(anchor="w", pady=(0, 4))
@@ -1421,12 +1939,16 @@ class GestorListaEspera:
         self.archivar_cancelados = False
 
         # Preferencias de impresión
-        self.imprimir_al_iniciar = False   # No imprimir automáticamente al iniciar
-        self.imprimir_al_finalizar = True  # Imprimir automáticamente al finalizar
+        self.imprimir_al_iniciar = True   # Imprimir automáticamente al iniciar
+        self.imprimir_al_finalizar = False  # No imprimir automáticamente al finalizar
 
         # Interacción del usuario (para evitar refrescos durante gestos)
         self.interactuando = False
         self._interaccion_timer = None
+        
+        # Control de bloqueo de procesos por factura (4 minutos)
+        self.bloqueos_por_factura = {}  # {id_factura: {'bloqueado': bool, 'inicio': timestamp, 'timer': timer_id}}
+        self.duracion_bloqueo = 240  # 4 minutos en segundos
         
         # Título con información del usuario autenticado (unificado con PaintFlow)
         titulo_completo = f"PaintFlow — Producción | Usuario: {self.usuario_username} ({self.usuario_rol.title()}) | {self.sucursal_actual}"
@@ -1602,6 +2124,11 @@ class GestorListaEspera:
     
     def conectar_db(self):
         """Conecta a la base de datos PostgreSQL con reintentos y optimización"""
+        # Cargar psycopg2 dinámicamente cuando sea necesario
+        if not cargar_psycopg2():
+            print("❌ No se puede conectar: Driver PostgreSQL no disponible")
+            return None
+            
         max_intentos = 3
         tiempo_espera = 1
         
@@ -1616,7 +2143,7 @@ class GestorListaEspera:
                 # Configurar para mejor rendimiento
                 conn.set_session(autocommit=False)
                 return conn
-            except psycopg2.OperationalError as e:
+            except Exception as e:
                 if intento < max_intentos - 1:
                     print(f"⚠️ Intento {intento + 1} fallido, reintentando en {tiempo_espera}s...")
                     time.sleep(tiempo_espera)
@@ -1630,11 +2157,11 @@ class GestorListaEspera:
     
     def crear_interfaz(self):
         """Crea la interfaz principal con diseño minimalista y moderno"""
-        # Estilos ligeros y modernos (sin impacto en rendimiento)
+        # Estilos ligeros y modernos con fuentes más grandes
         try:
             style = ttk.Style()
-            style.configure("Modern.Treeview", rowheight=26, font=("Segoe UI", 10))
-            style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+            style.configure("Modern.Treeview", rowheight=30, font=("Segoe UI", 11))
+            style.configure("Treeview.Heading", font=("Segoe UI", 12, "bold"))
             # Mejorar contraste de selección
             style.map("Modern.Treeview",
                       background=[("selected", "#1976D2")],
@@ -1645,38 +2172,38 @@ class GestorListaEspera:
         header_frame = ttk.Frame(self.root, style="Card.TFrame")
         header_frame.pack(fill="x", padx=10, pady=8)
 
-        ttk.Label(header_frame, text="🏭 Sistema de Lista de Espera - Producción", font=("Segoe UI", 16, "bold"), style="Card.TLabel").pack(side="left", padx=8)
+        ttk.Label(header_frame, text="🏭 Sistema de Lista de Espera - Producción", font=("Segoe UI", 18, "bold"), style="Card.TLabel").pack(side="left", padx=8)
 
         # Agrupar info usuario, sucursal y config impresora en el header (derecha)
         right_header = ttk.Frame(header_frame, style="Card.TFrame")
         right_header.pack(side="right")
         if hasattr(self, 'usuario_id') and self.usuario_id != "sistema":
-            ttk.Label(right_header, text=f"👤 {self.usuario_id} ({self.usuario_rol.title()})", font=("Segoe UI", 10), style="Card.TLabel", bootstyle="success").pack(side="right", padx=5)
-        ttk.Label(right_header, text=f"🏢 {self.sucursal_actual}", font=("Segoe UI", 12), style="Card.TLabel", bootstyle="info").pack(side="right", padx=5)
+            ttk.Label(right_header, text=f"👤 {self.usuario_id} ({self.usuario_rol.title()})", font=("Segoe UI", 11), style="Card.TLabel", bootstyle="success").pack(side="right", padx=5)
+        ttk.Label(right_header, text=f"🏢 {self.sucursal_actual}", font=("Segoe UI", 13), style="Card.TLabel", bootstyle="info").pack(side="right", padx=5)
         impresora_actual = cargar_impresora_guardada()
-        self.label_impresora = ttk.Label(right_header, text=f"🖨️ {impresora_actual[:20] if impresora_actual else 'Sin configurar'}", font=("Segoe UI", 9), style="Card.TLabel", bootstyle="success" if impresora_actual else "warning")
+        self.label_impresora = ttk.Label(right_header, text=f"🖨️ {impresora_actual[:20] if impresora_actual else 'Sin configurar'}", font=("Segoe UI", 10), style="Card.TLabel", bootstyle="success" if impresora_actual else "warning")
         self.label_impresora.pack(side="right", padx=5)
         ttk.Button(right_header, text="🖨️ Config", command=self.configurar_impresora, style="Modern.TButton", bootstyle="secondary").pack(side="right", padx=5)
 
         # Filtros y actualizar agrupados en una sola barra
         filtros_bar = ttk.Frame(self.root, style="Card.TFrame")
         filtros_bar.pack(fill="x", padx=10, pady=4)
-        ttk.Label(filtros_bar, text="Estado:", style="Card.TLabel").pack(side="left", padx=5)
-        self.filtro_estado = ttk.Combobox(filtros_bar, values=["Todos", "Pendiente", "En Espera", "En Proceso", "Finalizados"], state="readonly", width=12)
+        ttk.Label(filtros_bar, text="Estado:", style="Card.TLabel", font=("Segoe UI", 11)).pack(side="left", padx=5)
+        self.filtro_estado = ttk.Combobox(filtros_bar, values=["Todos", "Pendiente", "En Espera", "En Proceso", "Finalizados"], state="readonly", width=12, font=("Segoe UI", 10))
         self.filtro_estado.set("Todos")
         self.filtro_estado.pack(side="left", padx=5)
         self.filtro_estado.bind('<<ComboboxSelected>>', self.on_filtro_change)
-        ttk.Label(filtros_bar, text="Prioridad:", style="Card.TLabel").pack(side="left", padx=5)
-        self.filtro_prioridad = ttk.Combobox(filtros_bar, values=["Todas", "Alta", "Media", "Baja"], state="readonly", width=12)
+        ttk.Label(filtros_bar, text="Prioridad:", style="Card.TLabel", font=("Segoe UI", 11)).pack(side="left", padx=5)
+        self.filtro_prioridad = ttk.Combobox(filtros_bar, values=["Todas", "Alta", "Media", "Baja"], state="readonly", width=12, font=("Segoe UI", 10))
         self.filtro_prioridad.set("Todas")
         self.filtro_prioridad.pack(side="left", padx=5)
         self.filtro_prioridad.bind('<<ComboboxSelected>>', self.on_filtro_change)
         ttk.Button(filtros_bar, text="🔄 Actualizar", command=self.cargar_datos, style="Modern.TButton", bootstyle="primary").pack(side="left", padx=16)
-        self.label_ultima_actualizacion = ttk.Label(filtros_bar, text="🕐 Actualizando...", font=("Segoe UI", 9), style="Card.TLabel", bootstyle="secondary")
+        self.label_ultima_actualizacion = ttk.Label(filtros_bar, text="🕐 Actualizando...", font=("Segoe UI", 10), style="Card.TLabel", bootstyle="secondary")
         self.label_ultima_actualizacion.pack(side="left", padx=16)
 
         # Mensajes de impresión
-        self.label_mensaje = ttk.Label(self.root, text="", font=("Segoe UI", 10), style="Card.TLabel", bootstyle="info")
+        self.label_mensaje = ttk.Label(self.root, text="", font=("Segoe UI", 11), style="Card.TLabel", bootstyle="info")
         self.label_mensaje.pack(pady=2)
         # Barra de acciones (se eliminan botones duplicados por menú contextual)
         acciones_bar = ttk.Frame(self.root, style="Card.TFrame")
@@ -1706,17 +2233,17 @@ class GestorListaEspera:
         self.tree["columns"] = columnas
         self.tree["show"] = "headings"
         anchos = {
-            "ID Prof.": 90,
-            "Factura": 90,
-            "Código": 90,
-            "Producto": 170,
-            "Terminación": 95,
-            "Código Base": 110,
-            "Prioridad": 80,
-            "Cantidad": 70,
-            "Estado": 100,
-            "Tiempo Est.": 95,
-            "Operador": 110
+            "ID Prof.": 100,
+            "Factura": 100,
+            "Código": 100,
+            "Producto": 180,
+            "Terminación": 105,
+            "Código Base": 120,
+            "Prioridad": 90,
+            "Cantidad": 80,
+            "Estado": 110,
+            "Tiempo Est.": 105,
+            "Operador": 120
         }
         # Alineación por columna para mejor lectura
         anchors = {
@@ -2482,7 +3009,7 @@ class GestorListaEspera:
             ayuda_label = tk.Label(
                 ayuda_frame,
                 text="💡 Digite el nombre completo del colorista que realizará el trabajo",
-                font=("Segoe UI", 9),
+                font=("Segoe UI", 10),
                 fg="#f57c00",
                 bg="#fff3e0",
                 wraplength=380
@@ -2973,6 +3500,13 @@ class GestorListaEspera:
         operador = self.seleccionar_operador()
         if not operador or not str(operador).strip():
             return
+        
+        # Obtener la factura del pedido seleccionado
+        factura_pedido = self._obtener_factura_seleccionada()
+        if factura_pedido:
+            # Iniciar bloqueo de 4 minutos desde el inicio del proceso para esta factura
+            self._iniciar_bloqueo_proceso(factura_pedido)
+        
         threading.Thread(target=self._iniciar_produccion_async, args=(id_profesional, operador), daemon=True).start()
 
     def _resolver_operador_por_defecto(self):
@@ -3064,7 +3598,12 @@ class GestorListaEspera:
                 finalizar_state = tk.NORMAL
                 cancelar_state = tk.NORMAL
                 imprimir_state = tk.NORMAL
-            else:  # Finalizado / Cancelado u otros
+            elif estado in ("Finalizado", "Completado"):
+                iniciar_state = tk.DISABLED
+                finalizar_state = tk.DISABLED
+                cancelar_state = tk.DISABLED
+                imprimir_state = tk.NORMAL  # Habilitar impresión para finalizados
+            else:  # Cancelado u otros
                 iniciar_state = tk.DISABLED
                 finalizar_state = tk.DISABLED
                 cancelar_state = tk.DISABLED
@@ -3214,7 +3753,7 @@ class GestorListaEspera:
             producto = (vals[3] if len(vals) > 3 else '') or ''
 
             presentacion = ''
-            base = ''
+            cantidad = ''
             try:
                 conn = self.conectar_db()
                 if conn:
@@ -3223,7 +3762,7 @@ class GestorListaEspera:
                     with conn.cursor() as cur:
                         cur.execute(
                             f"""
-                            SELECT presentacion, base
+                            SELECT presentacion, cantidad
                             FROM {tabla_sucursal}
                             WHERE id_orden_profesional = %s
                             LIMIT 1
@@ -3233,7 +3772,7 @@ class GestorListaEspera:
                         row = cur.fetchone()
                         if row:
                             presentacion = row[0] or ''
-                            base = row[1] or ''
+                            cantidad = row[1] or ''
                     conn.close()
             except Exception:
                 try:
@@ -3247,8 +3786,8 @@ class GestorListaEspera:
             win.grab_set()
             win.geometry("520x420")
 
-            info = ttk.Label(win, text=f"Código: {codigo}    Producto: {producto}    Presentación: {presentacion}    Base: {base}",
-                             font=("Segoe UI", 10))
+            info = ttk.Label(win, text=f"Código: {codigo}    Producto: {producto}    Presentación: {presentacion}    Cantidad: {cantidad}",
+                             font=("Segoe UI", 11))
             info.pack(padx=10, pady=(10, 6))
 
             producto_l = producto.strip().lower()
@@ -3367,13 +3906,21 @@ class GestorListaEspera:
                 print(f"✅ DEBUG: Cambios confirmados en la base de datos")
                 
                 # Imprimir etiqueta automáticamente solo si está habilitado
+                print(f"🔍 DEBUG: imprimir_al_iniciar = {self.imprimir_al_iniciar}")
+                print(f"🔍 DEBUG: datos_pedido = {datos_pedido}")
                 if self.imprimir_al_iniciar and datos_pedido:
+                    print(f"🖨️ DEBUG: Iniciando impresión automática para pedido {id_profesional}")
                     # Pasar el operador asignado explícitamente
                     self._imprimir_etiqueta_pedido(datos_pedido, sucursal_usuario, id_profesional, operador=usuario)
+                else:
+                    print(f"⚠️ DEBUG: No se imprime - imprimir_al_iniciar={self.imprimir_al_iniciar}, datos_pedido={bool(datos_pedido)}")
                 
                 # Actualizar UI en el hilo principal
                 self.root.after(0, lambda: self._mostrar_exito_inicio(id_profesional, usuario))
                 self.root.after(0, lambda: self.cargar_datos(forzar_recarga=True))
+                
+                # Iniciar verificación de estado de bloqueo
+                self.root.after(0, self._verificar_y_mostrar_estado_bloqueo)
                 
             except Exception as e:
                 cur.execute("ROLLBACK")
@@ -3397,6 +3944,7 @@ class GestorListaEspera:
     
     def _imprimir_etiqueta_pedido(self, datos_pedido, sucursal, id_profesional, operador=""):
         """Imprime la etiqueta del pedido (usada al finalizar o bajo demanda)."""
+        print(f"🖨️ DEBUG: _imprimir_etiqueta_pedido llamada con operador='{operador}' para ID {id_profesional}")
         try:
             # datos_pedido puede traer 7 u 8 campos (con operador al final)
             id_factura = None
@@ -3556,9 +4104,9 @@ class GestorListaEspera:
             id_profesional = item['values'][0]
             estado_actual = item['values'][8] if len(item['values']) > 8 else ''
 
-            # Regla: solo imprimir si ya está en proceso
-            if estado_actual != 'En Proceso':
-                messagebox.showinfo("Impresión restringida", "Solo se puede imprimir cuando el pedido está En Proceso.")
+            # Regla: solo imprimir si está en proceso o finalizado
+            if estado_actual not in ['En Proceso', 'Finalizado', 'Completado']:
+                messagebox.showinfo("Impresión restringida", "Solo se puede imprimir cuando el pedido está En Proceso, Finalizado o Completado.")
                 return
 
             # Si pertenece a lista con más de un elemento en proceso, imprimir toda la lista
@@ -3620,10 +4168,27 @@ class GestorListaEspera:
         if not factura:
             messagebox.showwarning("Lista", "No se pudo determinar la factura de la selección.")
             return
+        
+        # Contar pedidos pendientes en la lista
+        cantidad_pendientes = self._contar_items_factura(factura, estados=["Pendiente", "En Espera"])
+        
+        # Confirmación para iniciar lista completa
+        confirmacion = mostrar_pregunta("Confirmar Inicio de Lista", 
+                                      f"¿Desea iniciar TODA la lista de producción?\n\n"
+                                      f"Factura: {factura}\n"
+                                      f"Pedidos a iniciar: {cantidad_pendientes}\n\n"
+                                      f"Esto iniciará todos los pedidos pendientes de esta factura.")
+        
+        if not confirmacion:
+            return  # Usuario canceló la operación
+        
         # Pedir operador una vez
         operador = self.seleccionar_operador()
         if not operador or not str(operador).strip():
             return
+        
+        # Iniciar bloqueo de 4 minutos desde el inicio del proceso para esta factura
+        self._iniciar_bloqueo_proceso(factura)
         threading.Thread(target=self._iniciar_lista_completa_async, args=(factura, operador), daemon=True).start()
 
     def _iniciar_lista_completa_async(self, id_factura, operador):
@@ -3644,8 +4209,31 @@ class GestorListaEspera:
                 """, (datetime.now(), operador, id_factura))
                 n = cur.rowcount
                 cur.execute("COMMIT")
+                
+                # Si está habilitada la impresión al iniciar, imprimir todas las etiquetas de la lista
+                if self.imprimir_al_iniciar:
+                    print(f"🖨️ DEBUG: Imprimiendo etiquetas automáticamente para lista {id_factura}")
+                    # Obtener todos los pedidos de la lista que acabamos de iniciar
+                    cur.execute(f"""
+                        SELECT id_orden_profesional, codigo, producto, terminacion, presentacion, cantidad, base, ubicacion
+                        FROM {tabla}
+                        WHERE id_factura=%s AND estado='En Proceso'
+                    """, (id_factura,))
+                    pedidos_lista = cur.fetchall()
+                    
+                    # Imprimir etiqueta para cada pedido
+                    for pedido in pedidos_lista:
+                        id_prof, codigo, producto, terminacion, presentacion, cantidad, base, ubicacion = pedido
+                        datos_pedido = (codigo, producto, terminacion, presentacion, cantidad, base, ubicacion)
+                        self._imprimir_etiqueta_pedido(datos_pedido, suc, id_prof, operador=operador)
+                else:
+                    print(f"⚠️ DEBUG: Impresión al iniciar deshabilitada para lista {id_factura}")
+                
                 self.root.after(0, lambda: self._mostrar_mensaje_impresion(f"▶️ Lista {id_factura}: {n} pedidos iniciados por {operador}"))
                 self.root.after(0, lambda: self.cargar_datos(forzar_recarga=True))
+                
+                # Iniciar verificación de estado de bloqueo
+                self.root.after(0, self._verificar_y_mostrar_estado_bloqueo)
             except Exception as e:
                 cur.execute("ROLLBACK")
                 print(f"❌ Error iniciar lista: {e}")
@@ -3702,6 +4290,28 @@ class GestorListaEspera:
         if not factura:
             messagebox.showwarning("Lista", "No se pudo determinar la factura de la selección.")
             return
+        
+        # Verificar bloqueo de proceso activo para esta factura específica
+        if factura in self.bloqueos_por_factura:
+            tiempo_restante = self._obtener_tiempo_bloqueo_restante(factura)
+            if tiempo_restante > 0:
+                mostrar_advertencia("Lista Bloqueada", 
+                                  f"La lista {factura} está en proceso. Debe esperar {tiempo_restante // 60}m {tiempo_restante % 60}s antes de finalizar operaciones.")
+                return
+        
+        # Contar pedidos en proceso en la lista
+        cantidad_proceso = self._contar_items_factura(factura, estados=["En Proceso"])
+        
+        # Confirmación para finalizar lista completa
+        confirmacion = mostrar_pregunta("Confirmar Finalización de Lista", 
+                                      f"¿Desea finalizar TODA la lista de producción?\n\n"
+                                      f"Factura: {factura}\n"
+                                      f"Pedidos a finalizar: {cantidad_proceso}\n\n"
+                                      f"Esto marcará como completados todos los pedidos en proceso de esta factura.")
+        
+        if not confirmacion:
+            return  # Usuario canceló la operación
+        
         threading.Thread(target=self._finalizar_lista_async, args=(factura,), daemon=True).start()
 
     def _finalizar_lista_async(self, id_factura):
@@ -3743,6 +4353,9 @@ class GestorListaEspera:
 
                 self.root.after(0, lambda: self._mostrar_mensaje_impresion(f"✅ Lista {id_factura}: {n} pedidos finalizados"))
                 self.root.after(0, lambda: self.cargar_datos(forzar_recarga=True))
+                
+                # Iniciar verificación de estado de bloqueo
+                self.root.after(0, self._verificar_y_mostrar_estado_bloqueo)
             except Exception as e:
                 cur.execute("ROLLBACK")
                 print(f"❌ Error finalizar lista: {e}")
@@ -3754,6 +4367,15 @@ class GestorListaEspera:
 
     def finalizar_pedido(self):
         """Finaliza un pedido en proceso"""
+        # Obtener la factura del pedido seleccionado para verificar su bloqueo específico
+        factura_pedido = self._obtener_factura_seleccionada()
+        if factura_pedido and factura_pedido in self.bloqueos_por_factura:
+            tiempo_restante = self._obtener_tiempo_bloqueo_restante(factura_pedido)
+            if tiempo_restante > 0:
+                mostrar_advertencia("Lista Bloqueada", 
+                                  f"La lista {factura_pedido} está en proceso. Debe esperar {tiempo_restante // 60}m {tiempo_restante % 60}s antes de finalizar operaciones.")
+                return
+        
         # Evitar ejecuciones simultáneas
         if self.cargando_datos:
             messagebox.showwarning("Procesando", "Espere a que termine la operación en curso")
@@ -3848,6 +4470,9 @@ class GestorListaEspera:
                 self.root.after(0, lambda: self._mostrar_exito_finalizacion(id_profesional))
                 self.root.after(0, lambda: self.cargar_datos(forzar_recarga=True))
                 
+                # Iniciar verificación de estado de bloqueo
+                self.root.after(0, self._verificar_y_mostrar_estado_bloqueo)
+                
             except Exception as e:
                 cur.execute("ROLLBACK")
                 print(f"❌ Error en transacción de finalización: {e}")
@@ -3866,6 +4491,105 @@ class GestorListaEspera:
             self._mostrar_mensaje_impresion(f"✅ Pedido {id_profesional} finalizado")
         except Exception:
             pass
+    
+    def _iniciar_bloqueo_proceso(self, id_factura):
+        """Inicia el bloqueo de proceso por 4 minutos para una factura específica"""
+        try:
+            # Cancelar timer anterior para esta factura si existe
+            if id_factura in self.bloqueos_por_factura:
+                timer_anterior = self.bloqueos_por_factura[id_factura].get('timer')
+                if timer_anterior:
+                    try:
+                        self.root.after_cancel(timer_anterior)
+                    except Exception:
+                        pass
+            
+            # Inicializar bloqueo para esta factura
+            tiempo_inicio = time.time()
+            timer_id = self.root.after(
+                self.duracion_bloqueo * 1000,  # convertir a milliseconds
+                lambda f=id_factura: self._liberar_bloqueo_proceso(f)
+            )
+            
+            self.bloqueos_por_factura[id_factura] = {
+                'bloqueado': True,
+                'inicio': tiempo_inicio,
+                'timer': timer_id
+            }
+            
+            # Mostrar mensaje informativo
+            self._mostrar_mensaje_impresion(f"🔒 Lista {id_factura} - Bloqueada por {self.duracion_bloqueo // 60} minutos para completar operación")
+            
+            print(f"🔒 Bloqueo activado para factura {id_factura} por {self.duracion_bloqueo} segundos")
+            
+        except Exception as e:
+            print(f"⚠️ Error iniciando bloqueo para factura {id_factura}: {e}")
+    
+    def _liberar_bloqueo_proceso(self, id_factura):
+        """Libera el bloqueo de proceso para una factura específica"""
+        try:
+            if id_factura in self.bloqueos_por_factura:
+                del self.bloqueos_por_factura[id_factura]
+                
+                # Mostrar mensaje de liberación
+                self._mostrar_mensaje_impresion(f"🔓 Lista {id_factura} desbloqueada - Puede finalizar operaciones")
+                
+                print(f"🔓 Bloqueo liberado para factura {id_factura}")
+            
+        except Exception as e:
+            print(f"⚠️ Error liberando bloqueo para factura {id_factura}: {e}")
+    
+    def _obtener_tiempo_bloqueo_restante(self, id_factura):
+        """Obtiene el tiempo restante del bloqueo en segundos para una factura específica"""
+        try:
+            if id_factura not in self.bloqueos_por_factura:
+                return 0
+            
+            bloqueo_info = self.bloqueos_por_factura[id_factura]
+            if not bloqueo_info['bloqueado'] or not bloqueo_info['inicio']:
+                return 0
+            
+            tiempo_transcurrido = time.time() - bloqueo_info['inicio']
+            tiempo_restante = max(0, self.duracion_bloqueo - tiempo_transcurrido)
+            
+            # Si el tiempo se agotó, liberar automáticamente
+            if tiempo_restante <= 0:
+                self._liberar_bloqueo_proceso(id_factura)
+                return 0
+            
+            return int(tiempo_restante)
+            
+        except Exception:
+            return 0
+    
+    def _verificar_y_mostrar_estado_bloqueo(self, id_factura=None):
+        """Verifica el estado del bloqueo para una factura específica y actualiza la UI si es necesario"""
+        try:
+            # Si no se especifica factura, verificar todas las facturas bloqueadas
+            if id_factura is None:
+                facturas_bloqueadas = list(self.bloqueos_por_factura.keys())
+                if facturas_bloqueadas:
+                    # Mostrar estado de la primera factura bloqueada para el mensaje general
+                    self._verificar_y_mostrar_estado_bloqueo(facturas_bloqueadas[0])
+                return
+            
+            if id_factura in self.bloqueos_por_factura:
+                tiempo_restante = self._obtener_tiempo_bloqueo_restante(id_factura)
+                if tiempo_restante > 0:
+                    minutos = tiempo_restante // 60
+                    segundos = tiempo_restante % 60
+                    
+                    # Actualizar mensaje en la interfaz
+                    if hasattr(self, 'label_mensaje'):
+                        self.label_mensaje.config(text=f"🔒 Lista {id_factura} bloqueada - Tiempo restante: {minutos}m {segundos}s")
+                        
+                    # Reprogramar verificación cada 10 segundos
+                    self.root.after(10000, lambda f=id_factura: self._verificar_y_mostrar_estado_bloqueo(f))
+                else:
+                    # El bloqueo expiró, limpiar estado
+                    self._liberar_bloqueo_proceso(id_factura)
+        except Exception as e:
+            print(f"⚠️ Error verificando estado de bloqueo para factura {id_factura}: {e}")
 
     def _contar_items_factura(self, id_factura, estados=None):
         """Cuenta pedidos por factura en la tabla de la sucursal.
@@ -3919,13 +4643,23 @@ class GestorListaEspera:
         item = self.tree.item(selection[0])
         id_profesional = item['values'][0]  # Este es el ID profesional (texto)
         estado_actual = item['values'][8]  # Estado actual
+        codigo = item['values'][2] if len(item['values']) > 2 else 'N/A'
         
         # Validar que se puede cancelar
         if estado_actual in ['Finalizado', 'Cancelado']:
             messagebox.showwarning("Estado", f"No se puede cancelar un pedido que ya está {estado_actual.lower()}")
             return
         
-        # Sin confirmación: proceder directamente a cancelar
+        # CONFIRMACIÓN OBLIGATORIA PARA CANCELAR
+        confirmacion = mostrar_pregunta("Confirmar Cancelación", 
+                                      f"¿Está seguro de que desea CANCELAR el pedido?\n\n"
+                                      f"ID: {id_profesional}\n"
+                                      f"Código: {codigo}\n"
+                                      f"Estado actual: {estado_actual}\n\n"
+                                      f"Esta acción eliminará permanentemente el pedido.")
+        
+        if not confirmacion:
+            return  # Usuario canceló la operación
         
         # Usar threading para evitar congelamiento
         threading.Thread(
@@ -4752,9 +5486,36 @@ class GestorListaEspera:
     def cerrar_aplicacion(self):
         """Cierra la aplicación de manera segura"""
         try:
+            # Si hay procesos bloqueados activos, preguntar confirmación
+            facturas_bloqueadas = list(self.bloqueos_por_factura.keys())
+            if facturas_bloqueadas:
+                # Obtener tiempo restante de la primera factura bloqueada para mostrar
+                factura_ejemplo = facturas_bloqueadas[0]
+                tiempo_restante = self._obtener_tiempo_bloqueo_restante(factura_ejemplo)
+                if tiempo_restante > 0:
+                    lista_facturas = ", ".join(facturas_bloqueadas)
+                    confirmacion = mostrar_pregunta("Listas en Proceso", 
+                                                  f"Hay listas en proceso: {lista_facturas}\n"
+                                                  f"Tiempo restante (ejemplo): {tiempo_restante // 60}m {tiempo_restante % 60}s.\n\n"
+                                                  f"¿Está seguro de que desea cerrar la aplicación ahora?\n"
+                                                  f"Esto podría interrumpir operaciones importantes.")
+                    if not confirmacion:
+                        return  # No cerrar si el usuario cancela
+            
             print("🔍 Cerrando aplicación...")
             # Detener actualizaciones automáticas
             self.actualizacion_en_progreso = False
+            
+            # Cancelar timers de bloqueo por factura si existen
+            for factura, bloqueo_info in list(self.bloqueos_por_factura.items()):
+                timer_id = bloqueo_info.get('timer')
+                if timer_id:
+                    try:
+                        self.root.after_cancel(timer_id)
+                        print(f"🔍 Timer de bloqueo cancelado para factura {factura}")
+                    except:
+                        pass
+            self.bloqueos_por_factura.clear()
             
             # Cancelar timer específico si existe
             if hasattr(self, 'timer_id') and self.timer_id and hasattr(self, 'root') and self.root:
@@ -4770,6 +5531,8 @@ class GestorListaEspera:
                     self.root.after_cancel(self._recordatorio_timer_id)
                 except:
                     pass
+            
+            # Los bloqueos por factura ya fueron limpiados arriba
             
             # Cerrar ventana
             if hasattr(self, 'root') and self.root:
@@ -4791,6 +5554,12 @@ class GestorListaEspera:
         self.root.mainloop()
 
 if __name__ == "__main__":
+    # Verificar dependencias críticas antes de continuar
+    print("🔍 Verificando dependencias del sistema...")
+    if not verificar_dependencias_criticas():
+        print("❌ Usuario decidió no continuar debido a dependencias faltantes")
+        sys.exit(1)
+    
     # Crear root base y ejecutar login como Toplevel para mantener un único mainloop
     debug_log("Iniciando sistema de login para coloristas...")
     # Usar ttkbootstrap Window para que el login herede correctamente el tema azul
