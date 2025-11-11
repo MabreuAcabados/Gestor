@@ -158,7 +158,7 @@ def cargar_sonido():
                     SONIDO_DISPONIBLE = False
     return SONIDO_DISPONIBLE
 
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.7.1"
 URL_VERSION = "https://gestor-flks.onrender.com/Version.txt"
 URL_EXE = "https://gestor-flks.onrender.com/Gestor.exe"
 
@@ -285,13 +285,15 @@ if %ERRORLEVEL%==0 (
 
 echo [UPDATE] Proceso terminado, procediendo con actualizacion...
 
-REM Crear respaldo del ejecutable actual
+REM Intentar crear respaldo (no crítico si falla)
 if exist "{cur_p}" (
-    echo [UPDATE] Creando respaldo...
-    copy /Y "{cur_p}" "{backup_p}" > nul
+    echo [UPDATE] Intentando crear respaldo...
+    copy /Y "{cur_p}" "{backup_p}" > nul 2>&1
     if %ERRORLEVEL% neq 0 (
-        echo [UPDATE] Error creando respaldo
-        goto error_exit
+        echo [UPDATE] Advertencia: No se pudo crear respaldo, continuando...
+        REM No salir con error, continuar con la actualización
+    ) else (
+        echo [UPDATE] Respaldo creado exitosamente
     )
 )
 
@@ -299,27 +301,35 @@ REM Reemplazar ejecutable
 echo [UPDATE] Reemplazando ejecutable...
 move /Y "{new_p}" "{cur_p}"
 if %ERRORLEVEL% neq 0 (
-    echo [UPDATE] Error al reemplazar archivo, restaurando respaldo...
+    echo [UPDATE] Error al reemplazar archivo
     if exist "{backup_p}" (
-        move /Y "{backup_p}" "{cur_p}" > nul
+        echo [UPDATE] Restaurando desde respaldo...
+        move /Y "{backup_p}" "{cur_p}" > nul 2>&1
     )
-    goto error_exit
+    echo [UPDATE] Puede que necesite ejecutar como administrador
+    echo [UPDATE] O verificar que el archivo no esté en uso
+    pause
+    goto cleanup
 )
 
 echo [UPDATE] Actualizacion exitosa!
 
-REM Eliminar respaldo si todo salió bien
+REM Eliminar respaldo si existe
 if exist "{backup_p}" (
-    del /Q "{backup_p}" > nul
+    del /Q "{backup_p}" > nul 2>&1
+)
+
+REM Limpiar archivos temporales de actualización antiguos
+echo [UPDATE] Limpiando archivos temporales...
+for %%f in ("{os.path.dirname(cur_p)}\\Gestor_new_*.exe") do (
+    if exist "%%f" (
+        del /Q "%%f" > nul 2>&1
+    )
 )
 
 echo [UPDATE] Iniciando nueva version...
 start "" "{cur_p}"
 goto cleanup
-
-:error_exit
-echo [UPDATE] Error en la actualizacion
-pause
 
 :cleanup
 echo [UPDATE] Eliminando script temporal...
@@ -444,6 +454,16 @@ def check_update():
     - Omite el proceso si no es un ejecutable (útil durante desarrollo).
     """
     try:
+        # Verificar si ya se intentó actualizar hoy para evitar bucles
+        import tempfile
+        import os
+        today = datetime.now().strftime("%Y-%m-%d")
+        update_flag_file = os.path.join(tempfile.gettempdir(), f"gestor_update_check_{today}.flag")
+        
+        if os.path.exists(update_flag_file):
+            print(f"🔄 DEBUG UPDATE: Ya se verificó actualización hoy ({today}), omitiendo...")
+            return
+        
         is_frozen = _is_frozen_exe()
 
         headers = {
@@ -459,7 +479,19 @@ def check_update():
         r.raise_for_status()
         latest = r.text.strip()
         if not latest:
+            print(f"🔄 DEBUG UPDATE: No se pudo obtener versión del servidor")
             return
+
+        print(f"🔄 DEBUG UPDATE: Versión actual: {APP_VERSION}")
+        print(f"🔄 DEBUG UPDATE: Versión en servidor: {latest}")
+        print(f"🔄 DEBUG UPDATE: ¿Es más nueva? {is_newer(latest, APP_VERSION)}")
+
+        # Crear archivo flag para indicar que ya verificamos hoy
+        try:
+            with open(update_flag_file, 'w') as f:
+                f.write(f"Checked on {datetime.now().isoformat()}\nCurrent: {APP_VERSION}\nLatest: {latest}")
+        except Exception:
+            pass
 
         if is_newer(latest, APP_VERSION):
             # En desarrollo (no frozen), mostrar notificación elegante en lugar de actualizar
@@ -566,9 +598,42 @@ def check_update():
                 
                 base_path = os.path.dirname(_current_binary_path()) or os.getcwd()
                 
-                # Usar un nombre único para evitar conflictos
-                timestamp = str(int(time.time()))
-                new_exe = os.path.join(base_path, f"Gestor_new_{timestamp}.exe")
+                # Limpiar archivos de actualización antiguos antes de continuar
+                print(f"🔄 DEBUG UPDATE: Limpiando archivos antiguos...")
+                try:
+                    for file in os.listdir(base_path):
+                        if file.startswith("Gestor_new_") and file.endswith(".exe"):
+                            old_file = os.path.join(base_path, file)
+                            try:
+                                os.remove(old_file)
+                                print(f"🔄 DEBUG UPDATE: Eliminado archivo antiguo: {file}")
+                            except Exception as e:
+                                print(f"⚠️ DEBUG UPDATE: No se pudo eliminar {file}: {e}")
+                except Exception as e:
+                    print(f"⚠️ DEBUG UPDATE: Error limpiando archivos antiguos: {e}")
+                
+                # Usar nombre simple sin timestamp para evitar acumulación
+                new_exe = os.path.join(base_path, "Gestor_new.exe")
+                
+                # Si ya existe un archivo de actualización, verificar si es válido
+                if os.path.exists(new_exe):
+                    try:
+                        size = os.path.getsize(new_exe)
+                        if size > 100_000:  # Si parece válido
+                            print(f"🔄 DEBUG UPDATE: Archivo de actualización ya existe ({size} bytes)")
+                            if progress_window:
+                                progress_window.actualizar_estado("Usando actualización existente...")
+                                time.sleep(1)
+                                progress_window.cerrar_ventana()
+                            print(f"🔄 DEBUG UPDATE: Iniciando proceso de reemplazo...")
+                            run_windows_updater(new_exe, _current_binary_path())
+                            return
+                        else:
+                            # Archivo corrupto, eliminarlo
+                            os.remove(new_exe)
+                            print(f"🔄 DEBUG UPDATE: Archivo existente corrupto eliminado")
+                    except Exception as e:
+                        print(f"⚠️ DEBUG UPDATE: Error verificando archivo existente: {e}")
                 
                 print(f"🔄 DEBUG UPDATE: Descargando a: {new_exe}")
                 print(f"🔄 DEBUG UPDATE: Directorio base: {base_path}")
@@ -659,8 +724,12 @@ def check_update():
 
             # Otros SO: permanecer en silencio
             return
-    except Exception:
+        else:
+            # No hay actualizaciones disponibles
+            print(f"✅ DEBUG UPDATE: No hay actualizaciones disponibles (actual: {APP_VERSION}, servidor: {latest})")
+    except Exception as e:
         # No bloquear inicio por fallas de actualización
+        print(f"❌ DEBUG UPDATE: Error en verificación de actualización: {e}")
         return
 
 if __name__ == "__main__":
